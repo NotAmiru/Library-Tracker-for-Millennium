@@ -10,7 +10,9 @@
     "watch": "node scripts/starlight.mjs watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lsp": "node scripts/starlight.mjs lsp",
-    "prepare": "node scripts/starlight.mjs lsp"
+    "prepare": "node scripts/starlight.mjs lsp",
+    "test:backend": "lua tests/run.lua",
+    "test": "npm run typecheck && npm run test:backend"
   },
   "devDependencies": {
     "@steambrew/starlight": "^1.1.1",
