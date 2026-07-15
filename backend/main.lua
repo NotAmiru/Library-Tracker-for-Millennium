@@ -2,6 +2,7 @@ local logger = require("logger")
 local millennium = require("millennium")
 local json = require("json")
 local settings = require("settings")
+local tag_engine = require("tag_engine")
 
 -- RPC-callable functions are defined as plain globals (not locals) and
 -- also listed in the table returned below, matching the convention used
@@ -37,10 +38,24 @@ function update_settings(params)
 	return json.encode({ success = true, settings = result })
 end
 
+--- Dev-console helper: compute what tag a hypothetical game record would
+--- get, without touching storage. params: { game, hltb }, both matching
+--- tag_engine.calculate_tag's expected shapes. Configured thresholds are
+--- always read live from settings, not passed in, so this reflects
+--- exactly what a real sync would decide.
+--- Returns { success, tag } as a JSON string; tag is nil (JSON null) for backlog.
+function calculate_tag_preview(params)
+	params = params or {}
+	local thresholds = settings.get_all()
+	local tag = tag_engine.calculate_tag(params.game, params.hltb, thresholds)
+	return json.encode({ success = true, tag = tag })
+end
+
 return {
 	on_load = on_load,
 	on_frontend_loaded = on_frontend_loaded,
 	on_unload = on_unload,
 	get_settings = get_settings,
 	update_settings = update_settings,
+	calculate_tag_preview = calculate_tag_preview,
 }

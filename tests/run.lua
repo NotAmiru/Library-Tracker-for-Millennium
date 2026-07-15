@@ -7,6 +7,7 @@ local RESET_MODULES = {
 	"mock_natives",
 	"settings",
 	"storage",
+	"tag_engine",
 	"paths",
 	"json",
 	"fs",
@@ -25,6 +26,7 @@ end
 local specs = {
 	"tests/backend/settings_spec",
 	"tests/backend/storage_spec",
+	"tests/backend/tag_engine_spec",
 }
 
 local failures = 0
