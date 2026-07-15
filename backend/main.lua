@@ -213,6 +213,25 @@ function check_dropped_games()
 	return json.encode({ success = true, newly_dropped = newly_dropped })
 end
 
+--- data decodes to { level, message }. Pipes a frontend log line into
+--- this same backend logger/Logs panel -- CEF DevTools console access
+--- varies a lot by Millennium setup, but everyone testing this plugin
+--- has already found the Logs panel, so debugging output goes there
+--- too instead of only to console.log/console.error. Returns { success }.
+function log_frontend(data)
+	local params = decode_params(data)
+	local level = params.level or "info"
+	local message = tostring(params.message or "")
+	if level == "error" then
+		logger:error("[frontend] " .. message)
+	elseif level == "warn" then
+		logger:warn("[frontend] " .. message)
+	else
+		logger:info("[frontend] " .. message)
+	end
+	return json.encode({ success = true })
+end
+
 return {
 	on_load = on_load,
 	on_frontend_loaded = on_frontend_loaded,
@@ -229,4 +248,5 @@ return {
 	get_tagged_games = get_tagged_games,
 	get_backlog_games = get_backlog_games,
 	check_dropped_games = check_dropped_games,
+	log_frontend = log_frontend,
 }

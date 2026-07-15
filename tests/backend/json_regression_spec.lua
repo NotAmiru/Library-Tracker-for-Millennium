@@ -74,5 +74,11 @@ return function()
 	assert(type(decoded.games) == "table", "expected games field to decode to a table")
 	assert(decoded.games[1].game_name == "Counter-Strike 2")
 
+	-- log_frontend, same single-JSON-string-argument shape.
+	local log_payload = cjson.encode({ level = "info", message = "hello from a test" })
+	local log_response = main.log_frontend(log_payload)
+	local decoded_log = cjson.decode(log_response)
+	assert(decoded_log.success == true, "expected log_frontend to succeed given a raw JSON string argument")
+
 	print("json_regression_spec: OK")
 end
