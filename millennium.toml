@@ -1,0 +1,23 @@
+[plugin]
+id = "library-tracker"
+name = "Library Tracker"
+version = "0.1.0"
+author = "NotAmiru"
+description = "Automatic game progress tracking with achievement %, HowLongToBeat estimates, and Mastered/Completed/In Progress/Dropped tags."
+
+[backend]
+entry = "backend/main.lua"
+sources = ["backend/**/*.lua"]
+
+[frontend]
+entry = "frontend/index.tsx"
+
+[dev]
+auto_restart = true
+reload_steamui_when = "both"
+
+[compiler]
+output_path = "auto"
+
+[assets]
+resources = ["assets/**"]

@@ -1,0 +1,24 @@
+{
+  "name": "library-tracker-for-millennium",
+  "version": "0.1.0",
+  "description": "Automatic game progress tracking with achievement %, HowLongToBeat estimates, and Mastered/Completed/In Progress/Dropped tags for Millennium.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/starlight.mjs pack -o dist",
+    "build:release": "node scripts/starlight.mjs pack --release -o dist",
+    "watch": "node scripts/starlight.mjs watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lsp": "node scripts/starlight.mjs lsp",
+    "prepare": "node scripts/starlight.mjs lsp"
+  },
+  "devDependencies": {
+    "@steambrew/starlight": "^1.1.1",
+    "@types/react": "19.1.1",
+    "@types/react-dom": "19.1.1",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-icons": "^5.5.0",
+    "typescript": "^5.6.3"
+  }
+}
