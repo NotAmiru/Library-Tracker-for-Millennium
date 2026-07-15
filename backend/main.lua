@@ -5,6 +5,7 @@ local settings = require("settings")
 local tag_engine = require("tag_engine")
 local storage = require("storage")
 local sync = require("sync")
+local queries = require("queries")
 
 -- RPC-callable functions are defined as plain globals (not locals) and
 -- also listed in the table returned below, matching the convention used
@@ -109,6 +110,22 @@ function reset_to_auto_tag(params)
 	return json.encode({ success = true, record = record })
 end
 
+--- Returns { success, stats } as JSON: per-tag counts, backlog, and total.
+function get_tag_statistics()
+	return json.encode({ success = true, stats = queries.get_tag_statistics() })
+end
+
+--- Returns { success, games } as JSON: every tagged game, sorted by name.
+function get_tagged_games()
+	return json.encode({ success = true, games = queries.get_tagged_games() })
+end
+
+--- Returns { success, games } as JSON: every synced-but-untagged
+--- (backlog) game, sorted by name.
+function get_backlog_games()
+	return json.encode({ success = true, games = queries.get_backlog_games() })
+end
+
 return {
 	on_load = on_load,
 	on_frontend_loaded = on_frontend_loaded,
@@ -121,4 +138,7 @@ return {
 	set_manual_tag = set_manual_tag,
 	remove_tag = remove_tag,
 	reset_to_auto_tag = reset_to_auto_tag,
+	get_tag_statistics = get_tag_statistics,
+	get_tagged_games = get_tagged_games,
+	get_backlog_games = get_backlog_games,
 }
