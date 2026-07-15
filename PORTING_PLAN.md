@@ -4,6 +4,8 @@ Migration plan: **Deck Progress Tracker** (Decky Loader plugin) → **Library Tr
 
 Status: **Phase 2 deliverable — awaiting approval before implementation begins.**
 
+> **Post-implementation correction (Milestone 10.5):** §7 and open question #4 below targeted the v2 `.star`/`starlight` packaging format exclusively. During real-device testing it turned out `.star` support is unreleased dev-branch code in Millennium (merged roughly a day before this plan was written, not in any tagged release) — the user's actual installed Millennium (v3.3.1) doesn't support it. The implementation was migrated to the v1 "loose files" format (`plugin.json` + `@steambrew/ttc` build tool) instead, which has been Millennium's stable, established plugin format for a long time. This section is left as-written for the historical record of the original plan; see `README.md` for the actual, current packaging approach.
+
 ---
 
 ## 1. Overview of Deck Progress Tracker

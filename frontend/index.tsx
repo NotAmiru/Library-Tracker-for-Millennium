@@ -1,4 +1,4 @@
-import { definePlugin, staticClasses } from 'millennium';
+import { definePlugin, staticClasses } from '@steambrew/client';
 import { FaTrophy } from 'react-icons/fa';
 
 import { Settings } from './components/Settings';

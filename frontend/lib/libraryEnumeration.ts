@@ -1,4 +1,4 @@
-import type { SteamAppOverview } from 'millennium';
+import type { SteamAppOverview } from '@steambrew/client';
 
 /**
  * Best-effort enumeration of every appid the current user owns (installed

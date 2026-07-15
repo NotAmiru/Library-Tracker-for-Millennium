@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { JSX } from 'react';
-import { Focusable, Navigation } from 'millennium';
+import { Focusable, Navigation } from '@steambrew/client';
 import { TAG_COLORS, TAG_LABELS, TagIcon } from './TagIcon';
 import type { TagName } from '../types';
 

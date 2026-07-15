@@ -22,7 +22,7 @@ This is a ground-up port of [Deck Progress Tracker](https://github.com/maroun2/d
 
 ## Installation
 
-This plugin isn't published to the Millennium plugin marketplace yet. To install it manually:
+This plugin isn't published to the Millennium plugin marketplace yet, and targets Millennium's established "loose files" plugin format (`plugin.json` + a `backend/` Lua directory + a built frontend bundle) rather than the newer `.star` packed format, which as of writing is unreleased dev-branch-only code not yet in any tagged Millennium release. To install it manually:
 
 ```bash
 git clone https://github.com/NotAmiru/Library-Tracker-for-Millennium.git
@@ -31,23 +31,21 @@ npm install
 npm run build
 ```
 
-`npm run build` produces `dist/library-tracker.star`. Copy that file into your Millennium plugins directory and enable it from Millennium's settings in Steam.
+`npm run build` compiles the frontend to `.millennium/Dist/index.js`. Copy the **entire repo folder** (containing `plugin.json`, `backend/`, and the built `.millennium/Dist/`) into your Millennium plugins directory, then enable it from Millennium's settings in Steam.
 
 ## Development
 
 Requires Node.js 18+ and npm.
 
 ```bash
-npm install        # also runs `prepare`, which installs Millennium's type stubs into .millennium/
-npm run typecheck   # TypeScript, strict mode
+npm install            # installs @steambrew/client (types) and @steambrew/ttc (build tool)
+npm run typecheck        # TypeScript, strict mode
 npm run test:backend  # Lua backend unit tests (plain lua, or luajit if installed)
 npm run test         # typecheck + backend tests
-npm run build         # produces dist/library-tracker.star (debug build)
+npm run build         # compiles frontend/index.tsx -> .millennium/Dist/index.js (dev build)
 npm run build:release # minified release build
-npm run watch          # live rebuild + hot-restart against a running Millennium install
+npm run watch          # rebuilds on file change (millennium-ttc --watch)
 ```
-
-`npm run lsp` (also run automatically by `npm install`) installs Millennium's TypeScript and Lua type stubs. If you hit `Cannot find module 'millennium'` errors, run it manually and re-open your editor.
 
 ### Project layout
 
@@ -99,12 +97,15 @@ All configurable via the in-app Settings panel:
 
 ## Known limitations
 
-This port was built and verified without access to a running Steam/Millennium instance or to the live HowLongToBeat API (both blocked by this development environment's network policy). Everything here has been verified at the level the environment allows — Lua unit tests against mocked native modules, strict TypeScript compilation against Millennium's real SDK types, and successful `.star` packaging/verification — but the following haven't been exercised against the real thing and should be the first things checked when testing in an actual Steam client:
+This port was built and verified without access to a running Steam/Millennium instance or to the live HowLongToBeat API (both blocked by this development environment's network policy). Everything here has been verified at the level the environment allows — Lua unit tests against mocked native modules, strict TypeScript compilation against `@steambrew/client`'s real types, and a successful `millennium-ttc` build producing `.millennium/Dist/index.js` — but the following haven't been exercised against the real thing and should be the first things checked when testing in an actual Steam client:
 
-- **Game-detail badge injection** (`frontend/lib/patchLibraryApp.tsx`) — the route-patch mechanism is implemented against Millennium's documented `RoutePatch` type, but whether it actually renders correctly inside Steam's real library UI is unconfirmed.
+- **Game-detail badge injection** (`frontend/lib/patchLibraryApp.tsx`) — the route-patch mechanism is implemented against `@steambrew/client`'s documented `RoutePatch` type, but whether it actually renders correctly inside Steam's real library UI is unconfirmed.
 - **HowLongToBeat integration** (`backend/hltb_*.lua`) — the endpoint-discovery scraping and search request format are ported from a working reference plugin's source, but HLTB has no official API and its endpoint has rotated names before (`search` → `finder` → `find` → `bleed` → ...). If HLTB has rotated again since this was written, search will fail until the discovery logic (or, if the failure mode itself changed, `hltb_client.lua`) is updated.
 - **Library enumeration** (`frontend/lib/libraryEnumeration.ts`) — reads several undocumented Steam client internals (`SteamClient.Apps.GetAllApps`, `collectionStore`, `appStore.allApps`/`m_mapApps`) with a fallback chain, none of which are part of Millennium's official typed SDK.
 - **Dropped-games sweep runs once per backend startup, not on a 24-hour timer.** Millennium's Lua backend has no fire-and-forget sleep/interval primitive — the only async primitive exposed (`millennium.start_coroutine` + `yield_readable(fd)`) is for watching a file descriptor become readable, not for timers, and a literal multi-hour `utils.sleep()` would block the single-threaded Lua VM from answering any other RPC for its entire duration. Running the sweep at startup is a deliberate, documented alternative, not an oversight — see the comment in `backend/dropped_sweep.lua`.
+- **`backendType: "lua"`** is set in `plugin.json` even though it isn't part of the documented plugin schema, because a dev-branch snapshot of Millennium's plugin loader was seen requiring it now that Python backend support has been removed. Whether the version you have installed needs it, ignores it, or (on an older release) requires something else entirely for a Lua backend to load is unconfirmed — if the backend never starts, this is the first thing to check.
+
+**Packaging format note:** this plugin initially targeted Millennium's newer `.star` packed format (built with `starlight`), which turned out to be unreleased dev-branch code — merged roughly a day before this was written, not in any tagged release. It's now built as loose files with `@steambrew/ttc` instead, which has been the stable, established format for a long time. If you're on a very recent Millennium build that *does* support `.star`, that path is no longer wired up here, but the Lua backend and React frontend source are unaffected by which packaging format wraps them.
 
 ## Credits
 

@@ -33,10 +33,13 @@ export async function getTagStatistics(): Promise<TagStatistics> {
 
 export async function getTaggedGames(): Promise<TaggedGame[]> {
 	const result = await getTaggedGamesRpc();
-	return result.games;
+	// Defensive: the backend guards against Lua's empty-array-encodes-as-{}
+	// gotcha (see main.lua's encode_array), but coerce here too rather
+	// than let a malformed response crash every .filter()/.map() call site.
+	return Array.isArray(result.games) ? result.games : [];
 }
 
 export async function getBacklogGames(): Promise<BacklogGame[]> {
 	const result = await getBacklogGamesRpc();
-	return result.games;
+	return Array.isArray(result.games) ? result.games : [];
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import { PanelSection, PanelSectionRow, SliderField } from 'millennium';
+import { PanelSection, PanelSectionRow, SliderField } from '@steambrew/client';
 import { getSettings, updateSettings } from '../lib/settingsApi';
 import { logError } from '../lib/log';
 import type { PluginSettings } from '../types';

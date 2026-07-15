@@ -1,8 +1,8 @@
-import { ErrorBoundary, routerHook } from 'millennium';
+import { ErrorBoundary, routerHook } from '@steambrew/client';
 import type { ReactNode } from 'react';
 import type { RouteComponentProps, RouteProps } from 'react-router';
 import { GameTagBadge } from '../components/GameTagBadge';
-import { logError } from './log';
+import { logError, logInfo } from './log';
 
 const LIBRARY_APP_ROUTE = '/library/app/:appid';
 
@@ -20,6 +20,8 @@ function extractAppId(props: RouteComponentProps<{ appid?: string }>): number | 
  * -- Millennium's RoutePatch contract hands us the route's props directly
  * (unlike Decky's renderFunc-interception pattern), so a plain Fragment
  * wrap is sufficient and far less fragile than tree-walking. */
+let lastLoggedAppId: number | null = null;
+
 function withBadge(render: (props: RouteComponentProps<{ appid?: string }>) => ReactNode) {
 	return (props: RouteComponentProps<{ appid?: string }>): ReactNode => {
 		let original: ReactNode;
@@ -35,6 +37,17 @@ function withBadge(render: (props: RouteComponentProps<{ appid?: string }>) => R
 		}
 
 		const appid = extractAppId(props);
+
+		// Diagnostic: logged once per distinct appid (route re-renders
+		// often, so this avoids spamming the console) -- if this never
+		// prints while browsing game pages, the route patch isn't matching
+		// or isn't extracting an appid the way we expect; if it prints but
+		// no badge appears, the badge itself is failing after this point.
+		if (appid !== lastLoggedAppId) {
+			lastLoggedAppId = appid;
+			logInfo(`library-app route render observed, extracted appid=${String(appid)}`);
+		}
+
 		if (appid === null) {
 			return original;
 		}
@@ -70,17 +83,22 @@ export function patchLibraryApp(): void {
 		routerHook.addPatch(LIBRARY_APP_ROUTE, (route: RouteProps) => {
 			try {
 				if (typeof route.render === 'function') {
+					logInfo('library-app route patch fired, found route.render');
 					route.render = withBadge(route.render as (props: RouteComponentProps<{ appid?: string }>) => ReactNode);
 				} else if (route.component) {
+					logInfo('library-app route patch fired, found route.component');
 					const Component = route.component;
 					route.render = withBadge((props) => <Component {...props} />);
 					delete route.component;
+				} else {
+					logInfo('library-app route patch fired, but route has neither render nor component');
 				}
 			} catch (error) {
 				logError('failed to patch library-app route props', error);
 			}
 			return route;
 		});
+		logInfo('library-app route patch registered');
 	} catch (error) {
 		logError('failed to register library-app route patch', error);
 	}
