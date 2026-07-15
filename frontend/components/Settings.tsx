@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { ButtonItem, PanelSection, PanelSectionRow } from 'millennium';
 import { GameListSection } from './GameListSection';
+import { SettingsPanel } from './SettingsPanel';
 import { getBacklogGames, getTagStatistics, getTaggedGames } from '../lib/queries';
 import type { BacklogGame, TagStatistics, TaggedGame } from '../lib/queries';
 import { syncLibraryProgressive } from '../lib/librarySync';
@@ -50,32 +51,36 @@ export function Settings(): JSX.Element {
 	}, [refresh]);
 
 	return (
-		<PanelSection title="Library Tracker">
-			<PanelSectionRow>
-				<ButtonItem layout="below" onClick={() => void handleSync()} disabled={syncing}>
-					{syncing ? 'Syncing...' : 'Sync Entire Library'}
-				</ButtonItem>
-			</PanelSectionRow>
-
-			{message && (
+		<>
+			<PanelSection title="Library Tracker">
 				<PanelSectionRow>
-					<div style={{ fontSize: '12px', color: '#8f98a0' }}>{message}</div>
+					<ButtonItem layout="below" onClick={() => void handleSync()} disabled={syncing}>
+						{syncing ? 'Syncing...' : 'Sync Entire Library'}
+					</ButtonItem>
 				</PanelSectionRow>
-			)}
 
-			<PanelSectionRow>
-				<div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-					{TAG_DISPLAY_ORDER.map((tag) => (
-						<GameListSection key={tag} tag={tag} count={stats ? stats[tag] : 0} games={gamesForTag(tag)} />
-					))}
-					<GameListSection
-						tag="backlog"
-						count={stats ? stats.backlog : 0}
-						games={backlogGames}
-						onExpand={loadBacklog}
-					/>
-				</div>
-			</PanelSectionRow>
-		</PanelSection>
+				{message && (
+					<PanelSectionRow>
+						<div style={{ fontSize: '12px', color: '#8f98a0' }}>{message}</div>
+					</PanelSectionRow>
+				)}
+
+				<PanelSectionRow>
+					<div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+						{TAG_DISPLAY_ORDER.map((tag) => (
+							<GameListSection key={tag} tag={tag} count={stats ? stats[tag] : 0} games={gamesForTag(tag)} />
+						))}
+						<GameListSection
+							tag="backlog"
+							count={stats ? stats.backlog : 0}
+							games={backlogGames}
+							onExpand={loadBacklog}
+						/>
+					</div>
+				</PanelSectionRow>
+			</PanelSection>
+
+			<SettingsPanel />
+		</>
 	);
 }

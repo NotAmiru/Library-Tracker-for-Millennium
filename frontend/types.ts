@@ -6,9 +6,6 @@ export interface PluginSettings {
 	dropped_days_threshold: number;
 	hltb_cache_soft_ttl_hours: number;
 	hltb_cache_hard_ttl_days: number;
-	source_installed: boolean;
-	source_non_steam: boolean;
-	source_all_owned: boolean;
 }
 
 export interface GameRecord {

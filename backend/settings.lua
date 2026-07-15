@@ -7,15 +7,21 @@ local logger = require("logger")
 --- file I/O or explicit RPC round-trip is needed for settings specifically
 --- (contrast with backend/storage.lua, which handles per-game data that
 --- would blow past millennium.config's 256-key limit).
+--- Note: the source plugin (Deck Progress Tracker) had source_installed/
+--- source_non_steam/source_all_owned settings controlling its backend's
+--- local-file-based (VDF) library-discovery fallback. This port's library
+--- enumeration is entirely frontend-driven (frontend/lib/libraryEnumeration.ts,
+--- reading Steam's own client state) with no backend fallback discovery
+--- to speak of, so those three settings would do nothing here -- omitted
+--- rather than shipped as dead toggles, the same standard PORTING_PLAN.md
+--- applied to the source plugin's own dead settings (mastered_multiplier,
+--- auto_tag_enabled).
 local DEFAULTS = {
 	mastered_achievement_percent = 85,
 	in_progress_threshold_minutes = 30,
 	dropped_days_threshold = 365,
 	hltb_cache_soft_ttl_hours = 12,
 	hltb_cache_hard_ttl_days = 90,
-	source_installed = true,
-	source_non_steam = true,
-	source_all_owned = true,
 }
 
 local M = {}
