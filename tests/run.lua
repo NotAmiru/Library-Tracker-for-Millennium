@@ -8,6 +8,7 @@ local RESET_MODULES = {
 	"settings",
 	"storage",
 	"tag_engine",
+	"sync",
 	"paths",
 	"json",
 	"fs",
@@ -27,6 +28,7 @@ local specs = {
 	"tests/backend/settings_spec",
 	"tests/backend/storage_spec",
 	"tests/backend/tag_engine_spec",
+	"tests/backend/sync_spec",
 }
 
 local failures = 0
