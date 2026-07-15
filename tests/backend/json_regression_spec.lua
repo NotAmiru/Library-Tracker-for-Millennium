@@ -32,7 +32,6 @@ return function()
 	package.loaded["json"] = nil
 
 	local main = require("main")
-	local storage = require("storage")
 
 	local empty_tagged = main.get_tagged_games()
 	assert(
@@ -46,8 +45,30 @@ return function()
 		"expected an empty backlog list to encode as a JSON array, got: " .. empty_backlog
 	)
 
-	-- A non-empty list still round-trips correctly as an array.
-	storage.upsert(730, { game_name = "Counter-Strike 2", tag = "in_progress" })
+	-- Second real-device bug this same "use a real JSON library" approach
+	-- caught: a real Millennium install (v3.3.1) spreads a multi-key
+	-- object argument to callable() into positional Lua arguments sorted
+	-- alphabetically by key, rather than delivering a single Lua table --
+	-- frontend/lib/rpc.ts's jsonRpc() now wraps every call's params in a
+	-- single-key { data: "<json>" } object specifically to sidestep this,
+	-- so every RPC function must decode a raw JSON *string* argument, not
+	-- receive an already-decoded table. Exercise that exact shape here:
+	-- sync_game(data) where data is the plain JSON text, matching what
+	-- the real bridge delivers.
+	local sync_payload = cjson.encode({
+		appid = 730,
+		game_name = "Counter-Strike 2",
+		playtime_minutes = 45,
+		total_achievements = 0,
+		unlocked_achievements = 0,
+	})
+	local sync_response = main.sync_game(sync_payload)
+	local decoded_sync = cjson.decode(sync_response)
+	assert(decoded_sync.success == true, "expected sync_game to succeed given a raw JSON string argument")
+	assert(decoded_sync.tag == "in_progress", "expected in_progress from the synced data, got: " .. tostring(decoded_sync.tag))
+
+	-- A non-empty list still round-trips correctly as an array, using the
+	-- record sync_game just created above.
 	local populated = main.get_tagged_games()
 	local decoded = cjson.decode(populated)
 	assert(type(decoded.games) == "table", "expected games field to decode to a table")

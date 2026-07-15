@@ -29,6 +29,26 @@ local function encode_array(list)
 	return json.encode(list)
 end
 
+--- Every RPC-callable function below takes exactly one argument, `data`
+--- -- a JSON-encoded string of the real params object -- and decodes it
+--- itself, rather than declaring named table fields as separate
+--- parameters. See frontend/lib/rpc.ts's jsonRpc() for why: a real
+--- Millennium install was observed spreading a multi-key JS object
+--- argument into positional Lua arguments sorted alphabetically by key,
+--- not delivering it as a single Lua table, so a function declared as
+--- e.g. `function sync_game(params)` silently received just the
+--- alphabetically-first field's raw value instead of the whole table.
+local function decode_params(data)
+	if type(data) ~= "string" or data == "" then
+		return {}
+	end
+	local ok, decoded = pcall(json.decode, data)
+	if not ok or type(decoded) ~= "table" then
+		return {}
+	end
+	return decoded
+end
+
 function on_load()
 	logger:info("Library Tracker backend loaded")
 	-- See dropped_sweep.lua for why this runs once at startup rather than
@@ -56,10 +76,11 @@ function get_settings()
 	return json.encode({ success = true, settings = settings.get_all() })
 end
 
---- params: a table of setting key/value pairs to change in one call.
+--- data: JSON-encoded object of setting key/value pairs to change in one call.
 --- Returns the merged settings table as a JSON string: { success, settings }.
-function update_settings(params)
-	local ok, result = pcall(settings.update, params or {})
+function update_settings(data)
+	local params = decode_params(data)
+	local ok, result = pcall(settings.update, params)
 	if not ok then
 		logger:error("update_settings failed: " .. tostring(result))
 		return json.encode({ success = false, error = tostring(result) })
@@ -68,24 +89,26 @@ function update_settings(params)
 end
 
 --- Dev-console helper: compute what tag a hypothetical game record would
---- get, without touching storage. params: { game, hltb }, both matching
---- tag_engine.calculate_tag's expected shapes. Configured thresholds are
---- always read live from settings, not passed in, so this reflects
---- exactly what a real sync would decide.
+--- get, without touching storage. data decodes to { game, hltb }, both
+--- matching tag_engine.calculate_tag's expected shapes. Configured
+--- thresholds are always read live from settings, not passed in, so
+--- this reflects exactly what a real sync would decide.
 --- Returns { success, tag } as a JSON string; tag is nil (JSON null) for backlog.
-function calculate_tag_preview(params)
-	params = params or {}
+function calculate_tag_preview(data)
+	local params = decode_params(data)
 	local thresholds = settings.get_all()
 	local tag = tag_engine.calculate_tag(params.game, params.hltb, thresholds)
 	return json.encode({ success = true, tag = tag })
 end
 
---- params: { appid, game_name?, playtime_minutes?, rt_last_time_played?,
----           total_achievements?, unlocked_achievements? }. Fields the
---- caller doesn't know yet should be omitted, not set to null/nil.
+--- data decodes to { appid, game_name?, playtime_minutes?,
+--- rt_last_time_played?, total_achievements?, unlocked_achievements? }.
+--- Fields the caller doesn't know yet should be omitted, not set to
+--- null/nil.
 --- Returns { success, appid, tag, tag_changed, record } as JSON.
-function sync_game(params)
-	local ok, result = pcall(sync.sync_game, params or {})
+function sync_game(data)
+	local params = decode_params(data)
+	local ok, result = pcall(sync.sync_game, params)
 	if not ok then
 		logger:error("sync_game failed: " .. tostring(result))
 		return json.encode({ success = false, error = tostring(result) })
@@ -99,10 +122,10 @@ function sync_game(params)
 	})
 end
 
---- params: { appid }. Returns the stored record for one game, or null if
---- it has never been synced. Returns { success, record } as JSON.
-function get_game_record(params)
-	params = params or {}
+--- data decodes to { appid }. Returns the stored record for one game, or
+--- null if it has never been synced. Returns { success, record } as JSON.
+function get_game_record(data)
+	local params = decode_params(data)
 	local ok, record = pcall(storage.get, params.appid)
 	if not ok then
 		logger:error("get_game_record failed: " .. tostring(record))
@@ -111,11 +134,11 @@ function get_game_record(params)
 	return json.encode({ success = true, record = record })
 end
 
---- params: { appid, tag }. tag must be one of tag_engine.TAGS.
+--- data decodes to { appid, tag }. tag must be one of tag_engine.TAGS.
 --- Returns { success, record } as JSON, or { success = false, error } if
 --- tag is invalid.
-function set_manual_tag(params)
-	params = params or {}
+function set_manual_tag(data)
+	local params = decode_params(data)
 	local ok, result = pcall(sync.set_manual_tag, params.appid, params.tag)
 	if not ok then
 		logger:error("set_manual_tag failed: " .. tostring(result))
@@ -124,10 +147,10 @@ function set_manual_tag(params)
 	return json.encode({ success = true, record = result })
 end
 
---- params: { appid }. Deletes the game's stored record entirely,
+--- data decodes to { appid }. Deletes the game's stored record entirely,
 --- reverting it to backlog. Returns { success, existed } as JSON.
-function remove_tag(params)
-	params = params or {}
+function remove_tag(data)
+	local params = decode_params(data)
 	local ok, existed = pcall(sync.remove_tag, params.appid)
 	if not ok then
 		logger:error("remove_tag failed: " .. tostring(existed))
@@ -136,11 +159,11 @@ function remove_tag(params)
 	return json.encode({ success = true, existed = existed })
 end
 
---- params: { appid }. Clears any manual override and immediately
---- recomputes the tag from the game's current stored stats.
+--- data decodes to { appid }. Clears any manual override and
+--- immediately recomputes the tag from the game's current stored stats.
 --- Returns { success, record } as JSON.
-function reset_to_auto_tag(params)
-	params = params or {}
+function reset_to_auto_tag(data)
+	local params = decode_params(data)
 	local ok, record = pcall(sync.reset_to_auto_tag, params.appid)
 	if not ok then
 		logger:error("reset_to_auto_tag failed: " .. tostring(record))
