@@ -12,6 +12,23 @@ local dropped_sweep = require("dropped_sweep")
 -- also listed in the table returned below, matching the convention used
 -- by Millennium's own reference plugins.
 
+--- json.encode() can't tell an empty Lua table apart from an empty JSON
+--- object -- {} comes out as `{}`, not `[]`, since Lua has no separate
+--- array type to signal intent with (confirmed against the real
+--- lua-cjson library, which this "json" module is almost certainly
+--- built on given its API shape). That silently breaks any frontend
+--- code expecting an array (Array.prototype.filter/map throw on a plain
+--- object) the moment a list-returning endpoint has zero results, e.g.
+--- a fresh, never-synced library. Non-empty lists encode correctly
+--- (cjson detects the sequential-integer-key pattern), so this only
+--- needs to special-case the empty case.
+local function encode_array(list)
+	if list == nil or #list == 0 then
+		return "[]"
+	end
+	return json.encode(list)
+end
+
 function on_load()
 	logger:info("Library Tracker backend loaded")
 	-- See dropped_sweep.lua for why this runs once at startup rather than
@@ -149,7 +166,7 @@ function get_tagged_games()
 		logger:error("get_tagged_games failed: " .. tostring(games))
 		return json.encode({ success = false, error = tostring(games) })
 	end
-	return json.encode({ success = true, games = games })
+	return '{"success":true,"games":' .. encode_array(games) .. "}"
 end
 
 --- Returns { success, games } as JSON: every synced-but-untagged
@@ -160,7 +177,7 @@ function get_backlog_games()
 		logger:error("get_backlog_games failed: " .. tostring(games))
 		return json.encode({ success = false, error = tostring(games) })
 	end
-	return json.encode({ success = true, games = games })
+	return '{"success":true,"games":' .. encode_array(games) .. "}"
 end
 
 --- Manual/dev-console trigger for the same sweep on_load runs

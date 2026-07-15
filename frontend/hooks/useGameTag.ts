@@ -54,18 +54,28 @@ export function useGameTag(appid: number): UseGameTagResult {
 		};
 		void initialSync();
 
-		const registration = SteamClient.GameSessions.RegisterForAchievementNotification((notification) => {
-			if (notification.unAppID !== appid) {
-				return;
-			}
-			syncGame(appid)
-				.then(() => refetch())
-				.catch((error: unknown) => logError(`achievement-triggered sync for appid ${appid} failed`, error));
-		});
+		// Registration itself can throw synchronously (e.g. this API isn't
+		// present on the installed Steam/Millennium version) -- since this
+		// runs inside a route-injected component wrapped in an
+		// ErrorBoundary, an uncaught throw here would silently blank out
+		// the whole badge rather than just skip this one enhancement.
+		let registration: ReturnType<typeof SteamClient.GameSessions.RegisterForAchievementNotification> | null = null;
+		try {
+			registration = SteamClient.GameSessions.RegisterForAchievementNotification((notification) => {
+				if (notification.unAppID !== appid) {
+					return;
+				}
+				syncGame(appid)
+					.then(() => refetch())
+					.catch((error: unknown) => logError(`achievement-triggered sync for appid ${appid} failed`, error));
+			});
+		} catch (error) {
+			logError(`RegisterForAchievementNotification failed for appid ${appid}`, error);
+		}
 
 		return () => {
 			cancelled = true;
-			registration.unregister();
+			registration?.unregister();
 		};
 	}, [appid, refetch]);
 

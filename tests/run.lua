@@ -5,6 +5,7 @@ package.path = "backend/?.lua;tests/support/?.lua;" .. package.path
 
 local RESET_MODULES = {
 	"mock_natives",
+	"main",
 	"settings",
 	"storage",
 	"tag_engine",
@@ -42,6 +43,7 @@ local specs = {
 	"tests/backend/hltb_cache_spec",
 	"tests/backend/hltb_match_spec",
 	"tests/backend/dropped_sweep_spec",
+	"tests/backend/json_regression_spec",
 }
 
 local failures = 0

@@ -7,3 +7,7 @@ const PREFIX = '[LibraryTracker]';
 export function logError(context: string, error: unknown): void {
 	console.error(`${PREFIX} ${context}:`, error);
 }
+
+export function logInfo(message: string): void {
+	console.log(`${PREFIX} ${message}`);
+}
