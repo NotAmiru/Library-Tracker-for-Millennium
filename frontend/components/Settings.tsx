@@ -6,6 +6,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { getBacklogGames, getTagStatistics, getTaggedGames } from '../lib/queries';
 import type { BacklogGame, TagStatistics, TaggedGame } from '../lib/queries';
 import { syncLibraryProgressive } from '../lib/librarySync';
+import { logError } from '../lib/log';
 import type { TagName } from '../types';
 
 const TAG_DISPLAY_ORDER: TagName[] = ['in_progress', 'completed', 'mastered', 'dropped'];
@@ -18,9 +19,13 @@ export function Settings(): JSX.Element {
 	const [message, setMessage] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
-		const [nextStats, nextTagged] = await Promise.all([getTagStatistics(), getTaggedGames()]);
-		setStats(nextStats);
-		setTaggedGames(nextTagged);
+		try {
+			const [nextStats, nextTagged] = await Promise.all([getTagStatistics(), getTaggedGames()]);
+			setStats(nextStats);
+			setTaggedGames(nextTagged);
+		} catch (error) {
+			logError('refreshing dashboard stats failed', error);
+		}
 	}, []);
 
 	useEffect(() => {
@@ -31,7 +36,9 @@ export function Settings(): JSX.Element {
 
 	const loadBacklog = useCallback(() => {
 		if (backlogGames === null) {
-			void getBacklogGames().then(setBacklogGames);
+			getBacklogGames()
+				.then(setBacklogGames)
+				.catch((error: unknown) => logError('loading backlog games failed', error));
 		}
 	}, [backlogGames]);
 
@@ -45,6 +52,9 @@ export function Settings(): JSX.Element {
 			setMessage(`Synced ${result.total} games, ${result.newTags} tag changes, ${result.errors} error(s).`);
 			await refresh();
 			setBacklogGames(null);
+		} catch (error) {
+			logError('library sync failed', error);
+			setMessage('Sync failed -- see console for details.');
 		} finally {
 			setSyncing(false);
 		}

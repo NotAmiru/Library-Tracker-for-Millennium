@@ -86,7 +86,11 @@ end
 --- it has never been synced. Returns { success, record } as JSON.
 function get_game_record(params)
 	params = params or {}
-	local record = storage.get(params.appid)
+	local ok, record = pcall(storage.get, params.appid)
+	if not ok then
+		logger:error("get_game_record failed: " .. tostring(record))
+		return json.encode({ success = false, error = tostring(record) })
+	end
 	return json.encode({ success = true, record = record })
 end
 
@@ -97,6 +101,7 @@ function set_manual_tag(params)
 	params = params or {}
 	local ok, result = pcall(sync.set_manual_tag, params.appid, params.tag)
 	if not ok then
+		logger:error("set_manual_tag failed: " .. tostring(result))
 		return json.encode({ success = false, error = tostring(result) })
 	end
 	return json.encode({ success = true, record = result })
@@ -106,7 +111,11 @@ end
 --- reverting it to backlog. Returns { success, existed } as JSON.
 function remove_tag(params)
 	params = params or {}
-	local existed = sync.remove_tag(params.appid)
+	local ok, existed = pcall(sync.remove_tag, params.appid)
+	if not ok then
+		logger:error("remove_tag failed: " .. tostring(existed))
+		return json.encode({ success = false, error = tostring(existed) })
+	end
 	return json.encode({ success = true, existed = existed })
 end
 
@@ -115,24 +124,43 @@ end
 --- Returns { success, record } as JSON.
 function reset_to_auto_tag(params)
 	params = params or {}
-	local record = sync.reset_to_auto_tag(params.appid)
+	local ok, record = pcall(sync.reset_to_auto_tag, params.appid)
+	if not ok then
+		logger:error("reset_to_auto_tag failed: " .. tostring(record))
+		return json.encode({ success = false, error = tostring(record) })
+	end
 	return json.encode({ success = true, record = record })
 end
 
 --- Returns { success, stats } as JSON: per-tag counts, backlog, and total.
 function get_tag_statistics()
-	return json.encode({ success = true, stats = queries.get_tag_statistics() })
+	local ok, stats = pcall(queries.get_tag_statistics)
+	if not ok then
+		logger:error("get_tag_statistics failed: " .. tostring(stats))
+		return json.encode({ success = false, error = tostring(stats) })
+	end
+	return json.encode({ success = true, stats = stats })
 end
 
 --- Returns { success, games } as JSON: every tagged game, sorted by name.
 function get_tagged_games()
-	return json.encode({ success = true, games = queries.get_tagged_games() })
+	local ok, games = pcall(queries.get_tagged_games)
+	if not ok then
+		logger:error("get_tagged_games failed: " .. tostring(games))
+		return json.encode({ success = false, error = tostring(games) })
+	end
+	return json.encode({ success = true, games = games })
 end
 
 --- Returns { success, games } as JSON: every synced-but-untagged
 --- (backlog) game, sorted by name.
 function get_backlog_games()
-	return json.encode({ success = true, games = queries.get_backlog_games() })
+	local ok, games = pcall(queries.get_backlog_games)
+	if not ok then
+		logger:error("get_backlog_games failed: " .. tostring(games))
+		return json.encode({ success = false, error = tostring(games) })
+	end
+	return json.encode({ success = true, games = games })
 end
 
 --- Manual/dev-console trigger for the same sweep on_load runs

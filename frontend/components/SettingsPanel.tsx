@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { PanelSection, PanelSectionRow, SliderField } from 'millennium';
 import { getSettings, updateSettings } from '../lib/settingsApi';
+import { logError } from '../lib/log';
 import type { PluginSettings } from '../types';
 
 interface FieldConfig {
@@ -30,12 +31,14 @@ export function SettingsPanel(): JSX.Element {
 	const [settings, setSettings] = useState<PluginSettings | null>(null);
 
 	useEffect(() => {
-		void getSettings().then(setSettings);
+		getSettings()
+			.then(setSettings)
+			.catch((error: unknown) => logError('loading settings failed', error));
 	}, []);
 
 	const handleChange = useCallback((key: keyof PluginSettings, value: number) => {
 		setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
-		void updateSettings({ [key]: value });
+		updateSettings({ [key]: value }).catch((error: unknown) => logError(`updating setting '${key}' failed`, error));
 	}, []);
 
 	if (!settings) {

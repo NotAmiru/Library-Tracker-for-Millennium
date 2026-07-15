@@ -2,6 +2,7 @@
   "name": "library-tracker-for-millennium",
   "version": "0.1.0",
   "description": "Automatic game progress tracking with achievement %, HowLongToBeat estimates, and Mastered/Completed/In Progress/Dropped tags for Millennium.",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {
