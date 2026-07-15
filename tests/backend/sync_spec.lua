@@ -4,6 +4,7 @@ return function()
 	mock.install()
 	local sync = require("sync")
 	local storage = require("storage")
+	local hltb_cache = require("hltb_cache")
 
 	-- First sync of a new game creates a record and computes an auto tag.
 	local result = sync.sync_game({
@@ -55,6 +56,27 @@ return function()
 	assert(sync.remove_tag(730) == true, "remove_tag should report the record existed")
 	assert(storage.get(730) == nil, "record should be gone after remove_tag")
 	assert(sync.remove_tag(730) == false, "removing again should report nothing existed")
+
+	-- HLTB wiring: with no cached/reachable HLTB data (mock_natives'
+	-- http module always fails), Completed can never trigger -- CS2's
+	-- sync above already implicitly covers this (result.tag ==
+	-- "in_progress", not "completed", despite 45 minutes of playtime).
+	-- With a pre-populated cache entry, though, Completed must trigger
+	-- once playtime reaches main_story hours.
+	hltb_cache.set(220, { game_name = "Half-Life 2", main_story = 1 }) -- 60 minutes
+	local hltb_result = sync.sync_game({ appid = 220, game_name = "Half-Life 2", playtime_minutes = 60 })
+	assert(hltb_result.tag == "completed", "expected completed once playtime reaches cached HLTB main_story hours")
+
+	-- A game not yet in the HLTB cache falls back to a (mocked-failing)
+	-- live search, caches the miss, and can't be Completed from that sync.
+	local before_cache = sync.sync_game({ appid = 221, game_name = "Portal", playtime_minutes = 30 })
+	assert(before_cache.tag == "in_progress", "no HLTB data yet should never produce completed")
+
+	-- Once cached with a long main_story, the same playtime stays under
+	-- threshold and correctly remains in_progress, not completed.
+	hltb_cache.set(221, { game_name = "Portal", main_story = 5 })
+	local after_cache = sync.sync_game({ appid = 221, playtime_minutes = 30 })
+	assert(after_cache.tag == "in_progress", "30 minutes against a 5-hour main story should stay in_progress")
 
 	print("sync_spec: OK")
 end

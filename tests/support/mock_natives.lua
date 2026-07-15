@@ -59,6 +59,24 @@ function M.install()
 		return utils
 	end
 
+	package.preload["http"] = function()
+		local http = {}
+		-- No real network access in tests (and none available in this
+		-- sandbox regardless) -- every call fails cleanly, exercising the
+		-- same "request failed" path a real offline/blocked HLTB request
+		-- would. Tests that need a successful HLTB match populate
+		-- hltb_cache directly instead of going through this module.
+		local function fail()
+			return nil, "mocked: no network in tests"
+		end
+		http.get = fail
+		http.post = fail
+		http.put = fail
+		http.delete = fail
+		http.request = fail
+		return http
+	end
+
 	package.preload["logger"] = function()
 		local logger = {}
 		function logger:info(_) end

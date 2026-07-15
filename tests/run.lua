@@ -10,12 +10,18 @@ local RESET_MODULES = {
 	"tag_engine",
 	"sync",
 	"queries",
+	"hltb_cache",
+	"hltb_client",
+	"hltb_match",
+	"hltb_utils",
+	"hltb_endpoint_discovery",
 	"paths",
 	"json",
 	"fs",
 	"utils",
 	"logger",
 	"millennium",
+	"http",
 }
 
 local function reset_modules()
@@ -31,6 +37,9 @@ local specs = {
 	"tests/backend/tag_engine_spec",
 	"tests/backend/sync_spec",
 	"tests/backend/queries_spec",
+	"tests/backend/hltb_utils_spec",
+	"tests/backend/hltb_cache_spec",
+	"tests/backend/hltb_match_spec",
 }
 
 local failures = 0

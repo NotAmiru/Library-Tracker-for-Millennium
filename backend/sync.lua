@@ -1,12 +1,53 @@
 local storage = require("storage")
 local settings = require("settings")
 local tag_engine = require("tag_engine")
+local hltb_cache = require("hltb_cache")
+local hltb_match = require("hltb_match")
+local hltb_utils = require("hltb_utils")
 
 --- Sync orchestration: merge a fresh data snapshot for one game into
 --- storage and recompute its tag, unless it's been manually overridden.
 --- Kept separate from main.lua's RPC wrapper so it's unit-testable
 --- without going through the JSON-string RPC envelope.
 local M = {}
+
+--- Returns cached/fetched HLTB data for `appid`/`game_name`, or nil if
+--- there's no match (or the lookup was skipped entirely). A hard-expired
+--- or missing cache entry triggers a live HLTB search; a soft-expired
+--- ("stale") entry is returned immediately without a network call --
+--- stale-while-revalidate in spirit, though the "revalidate" half is a
+--- synchronous fetch-on-next-hard-expiry rather than a background
+--- refresh, since Millennium's Lua backend has no simple fire-and-forget
+--- async primitive to do that with.
+local function get_hltb_data(appid, game_name, thresholds)
+	local soft_ttl = (thresholds.hltb_cache_soft_ttl_hours or 12) * 3600
+	local hard_ttl = (thresholds.hltb_cache_hard_ttl_days or 90) * 86400
+
+	local cached = hltb_cache.get(appid, soft_ttl, hard_ttl)
+	if cached ~= nil then
+		return cached
+	end
+
+	if hltb_utils.should_skip_lookup(game_name) then
+		return nil
+	end
+
+	local match = hltb_match.search_best_match(game_name)
+	if match == nil then
+		-- Cache the miss too (no completion-time fields), so a game with
+		-- no HLTB entry isn't re-searched on every single sync.
+		return hltb_cache.set(appid, { game_name = game_name })
+	end
+
+	return hltb_cache.set(appid, {
+		game_name = game_name,
+		matched_name = match.game_name,
+		similarity = hltb_utils.calculate_similarity(game_name, match.game_name),
+		main_story = hltb_utils.seconds_to_hours(match.comp_main),
+		main_extra = hltb_utils.seconds_to_hours(match.comp_plus),
+		completionist = hltb_utils.seconds_to_hours(match.comp_100),
+	})
+end
 
 --- @param snapshot table: { appid, game_name?, playtime_minutes?, rt_last_time_played?, total_achievements?, unlocked_achievements? }
 ---   Optional fields are only expected to be *absent* when unknown, never
@@ -32,10 +73,7 @@ function M.sync_game(snapshot)
 
 	if not is_manual then
 		local thresholds = settings.get_all()
-		-- HLTB integration lands in a later milestone; existing.hltb is
-		-- always nil until then, matching "no HLTB match" behavior, so
-		-- Completed can only trigger once that's wired in.
-		local hltb = existing.hltb
+		local hltb = get_hltb_data(appid, fields.game_name, thresholds)
 		new_tag = tag_engine.calculate_tag(fields, hltb, thresholds)
 	end
 
@@ -82,7 +120,7 @@ end
 function M.reset_to_auto_tag(appid)
 	local existing = storage.get(appid) or {}
 	local thresholds = settings.get_all()
-	local hltb = existing.hltb
+	local hltb = get_hltb_data(appid, existing.game_name, thresholds)
 	local tag = tag_engine.calculate_tag(existing, hltb, thresholds)
 	return storage.upsert(appid, { tag = tag, is_manual = false })
 end
