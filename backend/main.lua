@@ -6,6 +6,7 @@ local tag_engine = require("tag_engine")
 local storage = require("storage")
 local sync = require("sync")
 local queries = require("queries")
+local dropped_sweep = require("dropped_sweep")
 
 -- RPC-callable functions are defined as plain globals (not locals) and
 -- also listed in the table returned below, matching the convention used
@@ -13,6 +14,14 @@ local queries = require("queries")
 
 function on_load()
 	logger:info("Library Tracker backend loaded")
+	-- See dropped_sweep.lua for why this runs once at startup rather than
+	-- on a standing 24-hour timer.
+	local ok, newly_dropped = pcall(dropped_sweep.check_dropped_games)
+	if ok then
+		logger:info("Startup dropped-games sweep tagged " .. newly_dropped .. " game(s)")
+	else
+		logger:error("Startup dropped-games sweep failed: " .. tostring(newly_dropped))
+	end
 	millennium.ready()
 end
 
@@ -126,6 +135,16 @@ function get_backlog_games()
 	return json.encode({ success = true, games = queries.get_backlog_games() })
 end
 
+--- Manual/dev-console trigger for the same sweep on_load runs
+--- automatically. Returns { success, newly_dropped } as JSON.
+function check_dropped_games()
+	local ok, newly_dropped = pcall(dropped_sweep.check_dropped_games)
+	if not ok then
+		return json.encode({ success = false, error = tostring(newly_dropped) })
+	end
+	return json.encode({ success = true, newly_dropped = newly_dropped })
+end
+
 return {
 	on_load = on_load,
 	on_frontend_loaded = on_frontend_loaded,
@@ -141,4 +160,5 @@ return {
 	get_tag_statistics = get_tag_statistics,
 	get_tagged_games = get_tagged_games,
 	get_backlog_games = get_backlog_games,
+	check_dropped_games = check_dropped_games,
 }

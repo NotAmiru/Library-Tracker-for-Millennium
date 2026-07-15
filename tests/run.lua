@@ -15,6 +15,7 @@ local RESET_MODULES = {
 	"hltb_match",
 	"hltb_utils",
 	"hltb_endpoint_discovery",
+	"dropped_sweep",
 	"paths",
 	"json",
 	"fs",
@@ -40,6 +41,7 @@ local specs = {
 	"tests/backend/hltb_utils_spec",
 	"tests/backend/hltb_cache_spec",
 	"tests/backend/hltb_match_spec",
+	"tests/backend/dropped_sweep_spec",
 }
 
 local failures = 0
