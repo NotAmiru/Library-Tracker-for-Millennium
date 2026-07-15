@@ -51,4 +51,40 @@ function M.sync_game(snapshot)
 	}
 end
 
+local function is_valid_tag(tag)
+	for _, candidate in ipairs(tag_engine.TAGS) do
+		if candidate == tag then
+			return true
+		end
+	end
+	return false
+end
+
+--- Force a tag for a game, overriding auto-calculation until
+--- reset_to_auto_tag() is called for it again.
+--- @return table record
+function M.set_manual_tag(appid, tag)
+	if not is_valid_tag(tag) then
+		error("invalid tag: " .. tostring(tag))
+	end
+	return storage.upsert(appid, { tag = tag, is_manual = true })
+end
+
+--- Delete a game's stored record entirely, reverting it to backlog.
+--- @return boolean existed
+function M.remove_tag(appid)
+	return storage.delete(appid)
+end
+
+--- Clear a manual override and immediately recompute the tag from the
+--- game's current stored stats.
+--- @return table record
+function M.reset_to_auto_tag(appid)
+	local existing = storage.get(appid) or {}
+	local thresholds = settings.get_all()
+	local hltb = existing.hltb
+	local tag = tag_engine.calculate_tag(existing, hltb, thresholds)
+	return storage.upsert(appid, { tag = tag, is_manual = false })
+end
+
 return M

@@ -36,5 +36,25 @@ return function()
 	assert(result4.record.total_achievements == 10, "achievement counts should be preserved when a sync omits them")
 	assert(result4.record.game_name == "Team Fortress 2", "game name should be preserved when a sync omits it")
 
+	-- set_manual_tag rejects unknown tag names.
+	local ok = pcall(sync.set_manual_tag, 730, "not_a_real_tag")
+	assert(not ok, "set_manual_tag should reject an invalid tag name")
+
+	-- set_manual_tag applies a tag and marks it manual.
+	local manual_record = sync.set_manual_tag(730, "dropped")
+	assert(manual_record.tag == "dropped")
+	assert(manual_record.is_manual == true)
+
+	-- reset_to_auto_tag clears the manual flag and recomputes from stored stats.
+	storage.upsert(730, { playtime_minutes = 45, total_achievements = 0, unlocked_achievements = 0 })
+	local reset_record = sync.reset_to_auto_tag(730)
+	assert(reset_record.is_manual == false, "reset_to_auto_tag should clear the manual flag")
+	assert(reset_record.tag == "in_progress", "reset_to_auto_tag should recompute from current stats")
+
+	-- remove_tag deletes the record and reports whether one existed.
+	assert(sync.remove_tag(730) == true, "remove_tag should report the record existed")
+	assert(storage.get(730) == nil, "record should be gone after remove_tag")
+	assert(sync.remove_tag(730) == false, "removing again should report nothing existed")
+
 	print("sync_spec: OK")
 end

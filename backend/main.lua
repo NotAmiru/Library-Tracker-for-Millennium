@@ -80,6 +80,35 @@ function get_game_record(params)
 	return json.encode({ success = true, record = record })
 end
 
+--- params: { appid, tag }. tag must be one of tag_engine.TAGS.
+--- Returns { success, record } as JSON, or { success = false, error } if
+--- tag is invalid.
+function set_manual_tag(params)
+	params = params or {}
+	local ok, result = pcall(sync.set_manual_tag, params.appid, params.tag)
+	if not ok then
+		return json.encode({ success = false, error = tostring(result) })
+	end
+	return json.encode({ success = true, record = result })
+end
+
+--- params: { appid }. Deletes the game's stored record entirely,
+--- reverting it to backlog. Returns { success, existed } as JSON.
+function remove_tag(params)
+	params = params or {}
+	local existed = sync.remove_tag(params.appid)
+	return json.encode({ success = true, existed = existed })
+end
+
+--- params: { appid }. Clears any manual override and immediately
+--- recomputes the tag from the game's current stored stats.
+--- Returns { success, record } as JSON.
+function reset_to_auto_tag(params)
+	params = params or {}
+	local record = sync.reset_to_auto_tag(params.appid)
+	return json.encode({ success = true, record = record })
+end
+
 return {
 	on_load = on_load,
 	on_frontend_loaded = on_frontend_loaded,
@@ -89,4 +118,7 @@ return {
 	calculate_tag_preview = calculate_tag_preview,
 	sync_game = sync_game,
 	get_game_record = get_game_record,
+	set_manual_tag = set_manual_tag,
+	remove_tag = remove_tag,
+	reset_to_auto_tag = reset_to_auto_tag,
 }
