@@ -1,5 +1,5 @@
 import type { JSX, MouseEvent } from 'react';
-import { DialogButton, Focusable } from 'millennium';
+import { DialogButton, Focusable } from '@steambrew/client';
 import { TAG_LABELS } from './TagIcon';
 import type { GameRecord, TagName } from '../types';
 

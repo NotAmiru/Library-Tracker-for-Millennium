@@ -1,6 +1,5 @@
-.millennium/lsp/
-.millennium/sourcemaps/
 node_modules/
+.millennium/
 dist/
 *.star
 *.log

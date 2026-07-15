@@ -1,4 +1,4 @@
-import { ErrorBoundary, routerHook } from 'millennium';
+import { ErrorBoundary, routerHook } from '@steambrew/client';
 import type { ReactNode } from 'react';
 import type { RouteComponentProps, RouteProps } from 'react-router';
 import { GameTagBadge } from '../components/GameTagBadge';

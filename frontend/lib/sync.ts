@@ -1,4 +1,5 @@
 import { jsonRpc } from './rpc';
+import type { RpcParams } from './rpc';
 import { readGameSnapshot } from './steamData';
 import type { GetGameRecordResult, SyncResult } from '../types';
 
@@ -11,7 +12,7 @@ const getGameRecordRpc = jsonRpc<GetGameRecordResult>('get_game_record');
 export async function syncGame(appid: number): Promise<SyncResult> {
 	const snapshot = await readGameSnapshot(appid);
 
-	const params: Record<string, unknown> = {
+	const params: RpcParams = {
 		appid: snapshot.appid,
 		game_name: snapshot.gameName,
 		playtime_minutes: snapshot.playtimeMinutes,

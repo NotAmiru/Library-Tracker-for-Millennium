@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import { ButtonItem, PanelSection, PanelSectionRow } from 'millennium';
+import { ButtonItem, PanelSection, PanelSectionRow } from '@steambrew/client';
 import { GameListSection } from './GameListSection';
 import { SettingsPanel } from './SettingsPanel';
 import { getBacklogGames, getTagStatistics, getTaggedGames } from '../lib/queries';
