@@ -80,5 +80,19 @@ return function()
 	local decoded_log = cjson.decode(log_response)
 	assert(decoded_log.success == true, "expected log_frontend to succeed given a raw JSON string argument")
 
+	-- get_hltb_data: null when nothing's cached yet, populated once
+	-- sync.sync_game's HLTB lookup has run (which the sync_game call
+	-- above already triggered for appid 730 -- the mocked http module
+	-- makes that lookup fail cleanly, so a miss gets cached).
+	local hltb_response = main.get_hltb_data(cjson.encode({ appid = 730 }))
+	local decoded_hltb = cjson.decode(hltb_response)
+	assert(decoded_hltb.success == true)
+	assert(type(decoded_hltb.hltb) == "table", "expected a cached (miss) entry for appid 730 after its sync")
+
+	local hltb_missing_response = main.get_hltb_data(cjson.encode({ appid = 999999 }))
+	local decoded_hltb_missing = cjson.decode(hltb_missing_response)
+	assert(decoded_hltb_missing.success == true)
+	assert(decoded_hltb_missing.hltb == nil, "expected null hltb for an appid that's never been synced")
+
 	print("json_regression_spec: OK")
 end

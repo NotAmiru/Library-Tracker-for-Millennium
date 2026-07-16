@@ -27,19 +27,32 @@ export function GameTagBadge({ appid }: GameTagBadgeProps): JSX.Element | null {
 				<div
 					onClick={() => setManagerOpen(true)}
 					style={{
-						padding: '4px 10px',
-						borderRadius: '999px',
-						border: '1px dashed #888',
-						color: '#888',
+						display: 'inline-flex',
+						alignItems: 'center',
+						gap: '6px',
+						padding: '4px 8px',
+						borderRadius: '4px',
+						color: '#8f98a0',
 						fontSize: '13px',
+						fontWeight: 600,
 						cursor: 'pointer',
 					}}
 				>
-					+ Add Tag
+					<span
+						style={{
+							width: '8px',
+							height: '8px',
+							borderRadius: '50%',
+							border: '1px dashed #8f98a0',
+							flexShrink: 0,
+						}}
+					/>
+					<span>ADD TAG</span>
 				</div>
 			)}
 			{managerOpen && (
 				<TagManager
+					appid={appid}
 					record={record}
 					onClose={() => setManagerOpen(false)}
 					onSetTag={(tag) => {

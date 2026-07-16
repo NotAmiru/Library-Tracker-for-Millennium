@@ -173,6 +173,19 @@ function reset_to_auto_tag(data)
 	return json.encode({ success = true, record = record })
 end
 
+--- data decodes to { appid }. Returns whatever HLTB match data has been
+--- cached for this game (regardless of staleness -- see hltb_cache.peek),
+--- or null if it's never been looked up. Returns { success, hltb } as JSON.
+function get_hltb_data(data)
+	local params = decode_params(data)
+	local ok, hltb = pcall(hltb_cache.peek, params.appid)
+	if not ok then
+		logger:error("get_hltb_data failed: " .. tostring(hltb))
+		return json.encode({ success = false, error = tostring(hltb) })
+	end
+	return json.encode({ success = true, hltb = hltb })
+end
+
 --- Returns { success, stats } as JSON: per-tag counts, backlog, and total.
 function get_tag_statistics()
 	local ok, stats = pcall(queries.get_tag_statistics)
@@ -250,4 +263,5 @@ return {
 	get_backlog_games = get_backlog_games,
 	check_dropped_games = check_dropped_games,
 	log_frontend = log_frontend,
+	get_hltb_data = get_hltb_data,
 }

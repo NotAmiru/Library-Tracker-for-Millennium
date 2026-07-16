@@ -37,3 +37,18 @@ export interface GetGameRecordResult {
 	success: boolean;
 	record: GameRecord | null;
 }
+
+export interface HltbData {
+	game_name: string;
+	matched_name?: string;
+	similarity?: number;
+	main_story?: number;
+	main_extra?: number;
+	completionist?: number;
+	cached_at: number;
+}
+
+export interface GetHltbDataResult {
+	success: boolean;
+	hltb: HltbData | null;
+}
