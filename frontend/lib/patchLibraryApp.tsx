@@ -4,28 +4,31 @@ import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
 
 // routerHook.addPatch('/library/app/:appid', ...) (the original approach
-// here) never fires on a real desktop Millennium install: it only invokes
-// its callback for routes whose `props.path` exactly matches a string
-// Steam's own React tree registered, and empirically -- confirmed via a
-// live device test with diagnostic logging on every render -- desktop
-// mode's library route list never contains that literal path. Rather than
-// guess at the real one, this instead mirrors the *proven*, real-device
-// desktop-mode approach used by jcdoll/hltb-millennium-plugin's
-// frontend/injection/{detector,observer}.ts: read Steam's own internal
-// navigation state directly (bypassing React Router entirely) and use a
-// MutationObserver to notice when the game-detail page's DOM has
-// (re)settled, rather than trying to hook into React's render cycle.
+// here) never fired on a real desktop Millennium install, and a follow-up
+// MutationObserver + document.querySelector approach *also* never fired --
+// live-device DevTools investigation with the user found why: a v1
+// "loose files" plugin's frontend script runs inside its own dedicated
+// iframe (visible in DevTools' frame dropdown as
+// "millennium-<plugin-name>"), whose `document` is just a near-empty
+// `#root` overlay shell, completely separate from the real page the user
+// is looking at (confirmed directly: document.querySelector for a
+// manually-verified real element returned null from inside that frame,
+// but found it instantly from "top"). Every DOM query in this file was
+// therefore querying the wrong document all along.
+//
+// Since steamloopback.host is the same origin for every one of Steam's
+// internal frames, `window.top` should be reachable directly rather than
+// needing a purpose-built bridge -- this targets `window.top`'s document
+// instead of our own iframe's. diagnoseExecutionContext() logs exactly
+// what's reachable so this can be re-diagnosed from the Logs panel alone
+// if that assumption turns out to be wrong too.
 const APP_ID_PATTERN = /\/app\/(\d+)/;
 
 // The container Steam renders the game-detail page's icon row (gear /
-// controller / info / heart) into. Lifted from the same reference plugin,
-// which anchors its own badge here. This is a webpack-hashed class name --
-// it can drift across Steam Client updates, which is the most likely
-// failure mode if this ever stops working again; the diagnostic logging
-// below is there specifically to distinguish "appid never detected" from
-// "appid detected but this selector found nothing" so that's fast to
-// re-diagnose without needing DevTools access.
-const CONTAINER_SELECTOR = '.NZMJ6g2iVnFsOOp-lDmIP';
+// controller / info / heart) into -- found via the user's own DevTools
+// element picker on a real game page, not guessed. Still a webpack-hashed
+// class name, so it can drift across Steam Client updates.
+const CONTAINER_SELECTOR = '._1EAxK56o5a9Nieu5HYkJ4k';
 const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
 
 declare global {
@@ -42,8 +45,38 @@ let mountedContainer: HTMLElement | null = null;
 let currentAppId: number | null = null;
 let loggedMissingContainerFor: number | null = null;
 
+/** The real top-level Steam window, if reachable from this plugin's
+ * iframe -- same-origin access can still throw (e.g. a future Millennium
+ * version that sandboxes plugin frames cross-origin), so every caller
+ * treats a thrown/undefined result as "not reachable" rather than
+ * crashing the whole plugin. */
+function topWindow(): Window | null {
+	try {
+		return window.top && window.top !== window ? window.top : window;
+	} catch {
+		return null;
+	}
+}
+
+function diagnoseExecutionContext(): void {
+	const top = topWindow();
+	let topDocDetail = 'unreachable';
+	try {
+		topDocDetail = top?.document ? `rootId=${top.document.getElementById('root') ? 'found' : 'missing'}, containerFound=${Boolean(top.document.querySelector(CONTAINER_SELECTOR))}` : 'no document';
+	} catch (error) {
+		topDocDetail = `threw: ${String(error)}`;
+	}
+	logInfo(
+		`execution context diagnostic: isIframe=${window.top !== window}, ` +
+			`topReachable=${top !== null}, topDoc=[${topDocDetail}], ` +
+			`ownRootId=${document.getElementById('root') ? 'found' : 'missing'}, ` +
+			`hasMainWindowBrowserManagerOnOwnWindow=${Boolean(window.MainWindowBrowserManager)}, ` +
+			`hasMainWindowBrowserManagerOnTop=${Boolean(top?.MainWindowBrowserManager)}`,
+	);
+}
+
 function currentAppIdFromLocation(): number | null {
-	const pathname = window.MainWindowBrowserManager?.m_lastLocation?.pathname;
+	const pathname = topWindow()?.MainWindowBrowserManager?.m_lastLocation?.pathname;
 	if (!pathname) {
 		return null;
 	}
@@ -73,7 +106,12 @@ function handleMutation(): void {
 		return;
 	}
 
-	const container = document.querySelector<HTMLElement>(CONTAINER_SELECTOR);
+	const topDoc = topWindow()?.document;
+	if (!topDoc) {
+		return;
+	}
+
+	const container = topDoc.querySelector<HTMLElement>(CONTAINER_SELECTOR);
 	if (!container) {
 		if (loggedMissingContainerFor !== appid) {
 			loggedMissingContainerFor = appid;
@@ -88,7 +126,7 @@ function handleMutation(): void {
 	logInfo(`mounting game badge for appid=${appid}`);
 
 	try {
-		const root = document.createElement('div');
+		const root = topDoc.createElement('div');
 		root.id = ROOT_ELEMENT_ID;
 		container.style.position = 'relative';
 		container.appendChild(root);
@@ -102,23 +140,30 @@ function handleMutation(): void {
 
 let installed = false;
 
-/** Watches the DOM for Steam's desktop game-detail page and mounts
- * GameTagBadge directly into it. Idempotent -- calling this more than
- * once (e.g. a plugin reload) is a no-op after the first. Gamepad/Big
- * Picture mode isn't handled yet (MainWindowBrowserManager's pathname
- * doesn't track navigation there) -- this silently no-ops in that mode
- * rather than throwing, same as it does on any other non-game-detail
- * page. */
+/** Watches the real top-level Steam window's DOM (not this plugin's own
+ * iframe -- see the block comment above) for the desktop game-detail
+ * page and mounts GameTagBadge directly into it. Idempotent -- calling
+ * this more than once (e.g. a plugin reload) is a no-op after the first.
+ * Gamepad/Big Picture mode isn't handled yet -- this silently no-ops in
+ * that mode rather than throwing, same as it does on any other
+ * non-game-detail page. */
 export function patchLibraryApp(): void {
 	if (installed) {
 		return;
 	}
 	installed = true;
 
+	diagnoseExecutionContext();
+
 	try {
+		const topDoc = topWindow()?.document;
+		if (!topDoc) {
+			logError('cannot install game-detail page observer: top window/document unreachable', new Error('no top document'));
+			return;
+		}
 		observer = new MutationObserver(handleMutation);
-		observer.observe(document.body, { childList: true, subtree: true });
-		logInfo('game-detail page observer installed');
+		observer.observe(topDoc.body, { childList: true, subtree: true });
+		logInfo('game-detail page observer installed against top document');
 		handleMutation();
 	} catch (error) {
 		logError('failed to install game-detail page observer', error);
