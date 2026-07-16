@@ -7,6 +7,7 @@ local storage = require("storage")
 local sync = require("sync")
 local queries = require("queries")
 local dropped_sweep = require("dropped_sweep")
+local hltb_cache = require("hltb_cache")
 
 -- RPC-callable functions are defined as plain globals (not locals) and
 -- also listed in the table returned below, matching the convention used
