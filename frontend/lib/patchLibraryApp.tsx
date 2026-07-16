@@ -1,78 +1,114 @@
-import { ErrorBoundary, routerHook } from '@steambrew/client';
-import type { ReactNode } from 'react';
-import type { RouteComponentProps, RouteProps } from 'react-router';
+import { createRoot } from 'react-dom/client';
+import type { Root } from 'react-dom/client';
 import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
 
-const LIBRARY_APP_ROUTE = '/library/app/:appid';
+// routerHook.addPatch('/library/app/:appid', ...) (the original approach
+// here) never fires on a real desktop Millennium install: it only invokes
+// its callback for routes whose `props.path` exactly matches a string
+// Steam's own React tree registered, and empirically -- confirmed via a
+// live device test with diagnostic logging on every render -- desktop
+// mode's library route list never contains that literal path. Rather than
+// guess at the real one, this instead mirrors the *proven*, real-device
+// desktop-mode approach used by jcdoll/hltb-millennium-plugin's
+// frontend/injection/{detector,observer}.ts: read Steam's own internal
+// navigation state directly (bypassing React Router entirely) and use a
+// MutationObserver to notice when the game-detail page's DOM has
+// (re)settled, rather than trying to hook into React's render cycle.
+const APP_ID_PATTERN = /\/app\/(\d+)/;
 
-function extractAppId(props: RouteComponentProps<{ appid?: string }>): number | null {
-	const raw = props.match?.params?.appid;
-	if (!raw) {
-		return null;
+// The container Steam renders the game-detail page's icon row (gear /
+// controller / info / heart) into. Lifted from the same reference plugin,
+// which anchors its own badge here. This is a webpack-hashed class name --
+// it can drift across Steam Client updates, which is the most likely
+// failure mode if this ever stops working again; the diagnostic logging
+// below is there specifically to distinguish "appid never detected" from
+// "appid detected but this selector found nothing" so that's fast to
+// re-diagnose without needing DevTools access.
+const CONTAINER_SELECTOR = '.NZMJ6g2iVnFsOOp-lDmIP';
+const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
+
+declare global {
+	interface Window {
+		MainWindowBrowserManager?: {
+			m_lastLocation?: { pathname?: string };
+		};
 	}
-	const appid = Number(raw);
-	return Number.isFinite(appid) ? appid : null;
 }
 
-/** Wraps a route's existing render output with our badge appended
- * alongside it, rather than trying to splice into Steam's own React tree
- * -- Millennium's RoutePatch contract hands us the route's props directly
- * (unlike Decky's renderFunc-interception pattern), so a plain Fragment
- * wrap is sufficient and far less fragile than tree-walking. */
-let lastLoggedAppId: number | null = null;
+let observer: MutationObserver | null = null;
+let mountedRoot: Root | null = null;
+let mountedContainer: HTMLElement | null = null;
+let currentAppId: number | null = null;
+let loggedMissingContainerFor: number | null = null;
 
-function withBadge(render: (props: RouteComponentProps<{ appid?: string }>) => ReactNode) {
-	return (props: RouteComponentProps<{ appid?: string }>): ReactNode => {
-		let original: ReactNode;
-		try {
-			original = render(props);
-		} catch (error) {
-			// The route we patched is misbehaving for reasons that have
-			// nothing to do with us -- surface it rather than silently
-			// swallowing the whole page, but don't let it stop us from at
-			// least trying to render our own badge below.
-			logError('original library-app route render threw', error);
-			original = null;
+function currentAppIdFromLocation(): number | null {
+	const pathname = window.MainWindowBrowserManager?.m_lastLocation?.pathname;
+	if (!pathname) {
+		return null;
+	}
+	const match = pathname.match(APP_ID_PATTERN);
+	return match ? Number(match[1]) : null;
+}
+
+function unmount(): void {
+	mountedRoot?.unmount();
+	mountedRoot = null;
+	mountedContainer?.remove();
+	mountedContainer = null;
+	currentAppId = null;
+}
+
+function handleMutation(): void {
+	const appid = currentAppIdFromLocation();
+
+	if (appid === null) {
+		if (currentAppId !== null) {
+			unmount();
 		}
+		return;
+	}
 
-		const appid = extractAppId(props);
+	if (appid === currentAppId && mountedContainer?.isConnected) {
+		return;
+	}
 
-		// Diagnostic: logged once per distinct appid (route re-renders
-		// often, so this avoids spamming the console) -- if this never
-		// prints while browsing game pages, the route patch isn't matching
-		// or isn't extracting an appid the way we expect; if it prints but
-		// no badge appears, the badge itself is failing after this point.
-		if (appid !== lastLoggedAppId) {
-			lastLoggedAppId = appid;
-			logInfo(`library-app route render observed, extracted appid=${String(appid)}`);
+	const container = document.querySelector<HTMLElement>(CONTAINER_SELECTOR);
+	if (!container) {
+		if (loggedMissingContainerFor !== appid) {
+			loggedMissingContainerFor = appid;
+			logInfo(`game page detected (appid=${appid}) but container selector "${CONTAINER_SELECTOR}" found nothing`);
 		}
+		return;
+	}
 
-		if (appid === null) {
-			return original;
-		}
+	unmount();
+	currentAppId = appid;
+	loggedMissingContainerFor = null;
+	logInfo(`mounting game badge for appid=${appid}`);
 
-		return (
-			<>
-				{original}
-				{/* ErrorBoundary keeps a badge-rendering failure (e.g. an
-				    unexpected RPC response shape) from taking down the
-				    whole game-detail page along with it. */}
-				<ErrorBoundary>
-					<GameTagBadge appid={appid} />
-				</ErrorBoundary>
-			</>
-		);
-	};
+	try {
+		const root = document.createElement('div');
+		root.id = ROOT_ELEMENT_ID;
+		container.style.position = 'relative';
+		container.appendChild(root);
+		mountedContainer = root;
+		mountedRoot = createRoot(root);
+		mountedRoot.render(<GameTagBadge appid={appid} />);
+	} catch (error) {
+		logError(`failed to mount game badge for appid=${appid}`, error);
+	}
 }
 
 let installed = false;
 
-/** Registers the game-detail page badge injection. Idempotent -- calling
- * this more than once (e.g. a plugin reload) is a no-op after the first.
- * Failing to register the patch at all (e.g. routerHook's internals
- * changed on a Steam update) is logged, not thrown -- the rest of the
- * plugin (QAM dashboard, settings) should keep working either way. */
+/** Watches the DOM for Steam's desktop game-detail page and mounts
+ * GameTagBadge directly into it. Idempotent -- calling this more than
+ * once (e.g. a plugin reload) is a no-op after the first. Gamepad/Big
+ * Picture mode isn't handled yet (MainWindowBrowserManager's pathname
+ * doesn't track navigation there) -- this silently no-ops in that mode
+ * rather than throwing, same as it does on any other non-game-detail
+ * page. */
 export function patchLibraryApp(): void {
 	if (installed) {
 		return;
@@ -80,26 +116,11 @@ export function patchLibraryApp(): void {
 	installed = true;
 
 	try {
-		routerHook.addPatch(LIBRARY_APP_ROUTE, (route: RouteProps) => {
-			try {
-				if (typeof route.render === 'function') {
-					logInfo('library-app route patch fired, found route.render');
-					route.render = withBadge(route.render as (props: RouteComponentProps<{ appid?: string }>) => ReactNode);
-				} else if (route.component) {
-					logInfo('library-app route patch fired, found route.component');
-					const Component = route.component;
-					route.render = withBadge((props) => <Component {...props} />);
-					delete route.component;
-				} else {
-					logInfo('library-app route patch fired, but route has neither render nor component');
-				}
-			} catch (error) {
-				logError('failed to patch library-app route props', error);
-			}
-			return route;
-		});
-		logInfo('library-app route patch registered');
+		observer = new MutationObserver(handleMutation);
+		observer.observe(document.body, { childList: true, subtree: true });
+		logInfo('game-detail page observer installed');
+		handleMutation();
 	} catch (error) {
-		logError('failed to register library-app route patch', error);
+		logError('failed to install game-detail page observer', error);
 	}
 }

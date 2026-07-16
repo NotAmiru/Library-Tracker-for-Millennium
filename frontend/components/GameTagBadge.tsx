@@ -8,9 +8,12 @@ interface GameTagBadgeProps {
 	appid: number;
 }
 
-/** Injected into the game-detail page header by lib/patchLibraryApp.tsx.
- * Syncs `appid` on mount, then renders its current tag (or an "add tag"
- * placeholder), opening TagManager for manual overrides on click. */
+/** Mounted directly into Steam's game-detail page icon row by
+ * lib/patchLibraryApp.tsx (a real DOM node, not a React-Router-rendered
+ * child), so it renders inline alongside the native icons rather than as
+ * an absolutely-positioned overlay. Syncs `appid` on mount, then renders
+ * its current tag (or an "add tag" placeholder), opening TagManager for
+ * manual overrides on click. */
 export function GameTagBadge({ appid }: GameTagBadgeProps): JSX.Element | null {
 	const { record, loading, setTag, remove, resetToAuto } = useGameTag(appid);
 	const [managerOpen, setManagerOpen] = useState(false);
@@ -20,7 +23,7 @@ export function GameTagBadge({ appid }: GameTagBadgeProps): JSX.Element | null {
 	}
 
 	return (
-		<div style={{ position: 'absolute', top: '50px', right: '20px', zIndex: 10 }}>
+		<div style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}>
 			{record?.tag ? (
 				<GameTag tag={record.tag} isManual={record.is_manual} onClick={() => setManagerOpen(true)} />
 			) : (
