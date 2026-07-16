@@ -1,6 +1,8 @@
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
-import { routerHook } from '@steambrew/client';
+import { ErrorBoundary, routerHook } from '@steambrew/client';
+import type { ReactNode } from 'react';
+import type { RouteComponentProps, RouteProps } from 'react-router';
 import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
 
@@ -136,6 +138,115 @@ function diagnoseRouterHook(): void {
 	}
 }
 
+/** routerHook's constructor found real Route components (see
+ * diagnoseRouterHook's log), so its reflection-based discovery does
+ * reach across into the real page despite our own document being
+ * isolated -- the missing piece is knowing the *exact* path string Steam
+ * registers for the game-detail route, which routerHook.addPatch matches
+ * by strict equality against route.props.path. Rather than keep
+ * guessing, this monkey-patches the (Logger-inherited) debug() method
+ * routerHook already calls with the real route list on every render
+ * (`this.debug('Route list: ', routeList)` inside processList) and pulls
+ * every route's real .props.path out of it -- legal at runtime since
+ * TypeScript's `private`/inherited-method typing is compile-time only. */
+function sniffRoutePaths(): void {
+	try {
+		const rh = routerHook as unknown as { debug: (...args: unknown[]) => void };
+		if (typeof rh.debug !== 'function') {
+			logError('routerHook route-path sniffer: debug() not found on routerHook', new Error('no debug method'));
+			return;
+		}
+		const originalDebug = rh.debug.bind(rh);
+		const seen = new Set<string>();
+		rh.debug = (...args: unknown[]) => {
+			originalDebug(...args);
+			if (args[0] !== 'Route list: ' || !Array.isArray(args[1])) {
+				return;
+			}
+			const paths = (args[1] as Array<{ props?: { path?: string } }>)
+				.map((entry) => entry?.props?.path)
+				.filter((path): path is string => Boolean(path));
+			const key = paths.join(',');
+			if (paths.length > 0 && !seen.has(key)) {
+				seen.add(key);
+				logInfo(`routerHook route list paths: ${JSON.stringify(paths)}`);
+			}
+		};
+	} catch (error) {
+		logError('failed to install routerHook route-path sniffer', error);
+	}
+}
+
+const LIBRARY_APP_ROUTE = '/library/app/:appid';
+
+function extractAppIdFromRouteProps(props: RouteComponentProps<{ appid?: string }>): number | null {
+	const raw = props.match?.params?.appid;
+	if (!raw) {
+		return null;
+	}
+	const appid = Number(raw);
+	return Number.isFinite(appid) ? appid : null;
+}
+
+/** Wraps a matched route's own render output with our badge appended
+ * alongside it. Rendered through routerHook, this executes as part of
+ * the real page's own React tree (unlike everything else in this file),
+ * so it's the one code path that can actually reach the visible page --
+ * fixed-positioned since it isn't a DOM sibling of Steam's icon row the
+ * way the (currently unreachable) DOM-injection code below assumes. */
+function withRouterHookBadge(render: (props: RouteComponentProps<{ appid?: string }>) => ReactNode) {
+	return (props: RouteComponentProps<{ appid?: string }>): ReactNode => {
+		let original: ReactNode;
+		try {
+			original = render(props);
+		} catch (error) {
+			logError('routerHook-patched library-app route render threw', error);
+			original = null;
+		}
+
+		const appid = extractAppIdFromRouteProps(props);
+		if (appid === null) {
+			return original;
+		}
+
+		return (
+			<>
+				{original}
+				<div style={{ position: 'fixed', top: '80px', right: '24px', zIndex: 1000 }}>
+					<ErrorBoundary>
+						<GameTagBadge appid={appid} />
+					</ErrorBoundary>
+				</div>
+			</>
+		);
+	};
+}
+
+function installRouterHookPatch(): void {
+	try {
+		routerHook.addPatch(LIBRARY_APP_ROUTE, (route: RouteProps) => {
+			logInfo(`routerHook patch callback fired for registered path=${LIBRARY_APP_ROUTE}, route.path=${String(route.path)}`);
+			try {
+				if (typeof route.render === 'function') {
+					route.render = withRouterHookBadge(route.render as (props: RouteComponentProps<{ appid?: string }>) => ReactNode);
+				} else if (route.component) {
+					const Component = route.component;
+					route.render = withRouterHookBadge((props) => <Component {...props} />);
+					delete route.component;
+				} else {
+					logInfo('routerHook patch fired but route has neither render nor component');
+				}
+			} catch (error) {
+				logError('failed to patch library-app route props via routerHook', error);
+			}
+			return route;
+		});
+		logInfo(`routerHook.addPatch registered for ${LIBRARY_APP_ROUTE}`);
+	} catch (error) {
+		logError('routerHook.addPatch registration failed', error);
+	}
+}
+
 function appIdFromLocation(): number | null {
 	const pathname = topWindow()?.MainWindowBrowserManager?.m_lastLocation?.pathname;
 	if (!pathname) {
@@ -232,6 +343,8 @@ export function patchLibraryApp(): void {
 
 	diagnoseExecutionContext();
 	diagnoseRouterHook();
+	sniffRoutePaths();
+	installRouterHookPatch();
 
 	try {
 		const topDoc = topWindow()?.document;
