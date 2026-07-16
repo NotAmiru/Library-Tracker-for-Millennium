@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
+import { routerHook } from '@steambrew/client';
 import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
 
@@ -103,9 +104,36 @@ function diagnoseExecutionContext(): void {
 		`execution context diagnostic: isIframe=${window.top !== window}, ` +
 			`topReachable=${top !== null}, topDoc=[${topDocDetail}], ` +
 			`ownRootId=${document.getElementById('root') ? 'found' : 'missing'}, ` +
+			`ownAriaLabelCount=${document.querySelectorAll('[aria-label]').length}, ` +
 			`hasMainWindowBrowserManagerOnOwnWindow=${Boolean(window.MainWindowBrowserManager)}, ` +
 			`hasMainWindowBrowserManagerOnTop=${Boolean(top?.MainWindowBrowserManager)}`,
 	);
+}
+
+/** @steambrew/client's routerHook doesn't rely on plain DOM queries at
+ * all -- its constructor reflects into Steam's own webpack module
+ * registry (findModuleByExport) and React fiber tree (getReactRoot) to
+ * find real page internals, which is a fundamentally different mechanism
+ * from document.querySelector. Since our own document has been shown to
+ * be isolated from the real page (see diagnoseExecutionContext -- zero
+ * aria-label elements where the real page has 15), this checks whether
+ * that reflection-based approach reached across regardless, before
+ * concluding routerHook is a dead end too. Reads routerHook's private
+ * fields via bracket access -- TypeScript's `private` is compile-time
+ * only, so this is legal at runtime and the only way to see in without
+ * modifying the vendored library. */
+function diagnoseRouterHook(): void {
+	try {
+		const rh = routerHook as unknown as Record<string, unknown>;
+		const patchedModes = rh.patchedModes instanceof Set ? Array.from(rh.patchedModes as Set<number>) : String(rh.patchedModes);
+		const routes = rh.routes;
+		logInfo(
+			`routerHook diagnostic: hasRouteComponent=${Boolean(rh.Route)}, hasDesktopRouteComponent=${Boolean(rh.DesktopRoute)}, ` +
+				`patchedModes=${JSON.stringify(patchedModes)}, routesLength=${Array.isArray(routes) ? routes.length : String(routes)}`,
+		);
+	} catch (error) {
+		logError('routerHook diagnostic failed', error);
+	}
 }
 
 function appIdFromLocation(): number | null {
@@ -203,6 +231,7 @@ export function patchLibraryApp(): void {
 	installed = true;
 
 	diagnoseExecutionContext();
+	diagnoseRouterHook();
 
 	try {
 		const topDoc = topWindow()?.document;
