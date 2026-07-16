@@ -3,26 +3,33 @@ import type { Root } from 'react-dom/client';
 import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
 
-// routerHook.addPatch('/library/app/:appid', ...) (the original approach
-// here) never fired on a real desktop Millennium install, and a follow-up
-// MutationObserver + document.querySelector approach *also* never fired --
-// live-device DevTools investigation with the user found why: a v1
-// "loose files" plugin's frontend script runs inside its own dedicated
-// iframe (visible in DevTools' frame dropdown as
-// "millennium-<plugin-name>"), whose `document` is just a near-empty
-// `#root` overlay shell, completely separate from the real page the user
-// is looking at (confirmed directly: document.querySelector for a
-// manually-verified real element returned null from inside that frame,
-// but found it instantly from "top"). Every DOM query in this file was
-// therefore querying the wrong document all along.
+// Two earlier approaches here both silently failed on a real desktop
+// Millennium install: routerHook.addPatch('/library/app/:appid', ...)
+// never fired, and a follow-up MutationObserver + document.querySelector
+// approach also never fired. Live-device DevTools diagnostics (run jointly
+// with the user, including a real execution-context dump logged from this
+// exact code -- see diagnoseExecutionContext()) settled where the earlier
+// code comment was wrong: this plugin's script runs directly in the same
+// top-level document as the real Steam UI (Millennium injects into what
+// its own logs call "SharedJSContext", which *is* the real window --
+// isIframe was confirmed false, and document.getElementById('root') finds
+// Steam's own React root). window.top vs window was a dead end.
 //
-// Since steamloopback.host is the same origin for every one of Steam's
-// internal frames, `window.top` should be reachable directly rather than
-// needing a purpose-built bridge -- this targets `window.top`'s document
-// instead of our own iframe's. diagnoseExecutionContext() logs exactly
-// what's reachable so this can be re-diagnosed from the Logs panel alone
-// if that assumption turns out to be wrong too.
+// The actual blocker: window.MainWindowBrowserManager -- which the
+// original appid-detection method depended on entirely -- does not exist
+// in this context (confirmed via the same diagnostic dump). So the old
+// code's very first gate (get an appid from that global) always failed
+// before it ever got to check whether the container existed, even though
+// the container itself is reachable once you're actually on a game page.
+//
+// Fixed by inverting the order: look for the container first (cheap,
+// reliable), and only then try to resolve an appid -- first via
+// MainWindowBrowserManager in case it's available on some other
+// Millennium/Steam version, and if not, by reading it out of the game's
+// own store/library header image URL, which Steam's CDN always serves as
+// .../store_item_assets/steam/apps/{appid}/{hash}/header.jpg.
 const APP_ID_PATTERN = /\/app\/(\d+)/;
+const HEADER_IMAGE_APP_ID_PATTERN = /store_item_assets\/steam\/apps\/(\d+)\//;
 
 // The container Steam renders the game-detail page's icon row (gear /
 // controller / info / heart) into -- found via the user's own DevTools
@@ -43,13 +50,14 @@ let observer: MutationObserver | null = null;
 let mountedRoot: Root | null = null;
 let mountedContainer: HTMLElement | null = null;
 let currentAppId: number | null = null;
-let loggedMissingContainerFor: number | null = null;
+let loggedMissingAppId = false;
 
-/** The real top-level Steam window, if reachable from this plugin's
- * iframe -- same-origin access can still throw (e.g. a future Millennium
- * version that sandboxes plugin frames cross-origin), so every caller
- * treats a thrown/undefined result as "not reachable" rather than
- * crashing the whole plugin. */
+/** The real top-level Steam window, if reachable from this plugin's own
+ * execution context -- kept as a fallback path (rather than assuming
+ * `window` is always correct) in case a future Millennium version does
+ * run plugin scripts inside a real iframe of the main window; same-origin
+ * access can still throw, so every caller treats a thrown/undefined
+ * result as "not reachable" rather than crashing the whole plugin. */
 function topWindow(): Window | null {
 	try {
 		return window.top && window.top !== window ? window.top : window;
@@ -75,13 +83,30 @@ function diagnoseExecutionContext(): void {
 	);
 }
 
-function currentAppIdFromLocation(): number | null {
+function appIdFromLocation(): number | null {
 	const pathname = topWindow()?.MainWindowBrowserManager?.m_lastLocation?.pathname;
 	if (!pathname) {
 		return null;
 	}
 	const match = pathname.match(APP_ID_PATTERN);
 	return match ? Number(match[1]) : null;
+}
+
+/** Steam always serves a game's official header art from a URL embedding
+ * its appid (.../store_item_assets/steam/apps/{appid}/.../header.jpg) --
+ * unlike the CDN paths used for recommendation-rail/community thumbnails
+ * elsewhere on the page, so this specific pattern is a reasonably safe
+ * document-wide search rather than needing to scope to a container
+ * ancestor Steam's DOM structure doesn't give us a reliable handle on. */
+function appIdFromHeaderImage(doc: Document): number | null {
+	for (const img of Array.from(doc.querySelectorAll('img'))) {
+		const src = img.currentSrc || img.src;
+		const match = src.match(HEADER_IMAGE_APP_ID_PATTERN);
+		if (match) {
+			return Number(match[1]);
+		}
+	}
+	return null;
 }
 
 function unmount(): void {
@@ -93,11 +118,25 @@ function unmount(): void {
 }
 
 function handleMutation(): void {
-	const appid = currentAppIdFromLocation();
+	const topDoc = topWindow()?.document;
+	if (!topDoc) {
+		return;
+	}
 
-	if (appid === null) {
+	const container = topDoc.querySelector<HTMLElement>(CONTAINER_SELECTOR);
+	if (!container) {
 		if (currentAppId !== null) {
 			unmount();
+		}
+		loggedMissingAppId = false;
+		return;
+	}
+
+	const appid = appIdFromLocation() ?? appIdFromHeaderImage(topDoc);
+	if (appid === null) {
+		if (!loggedMissingAppId) {
+			loggedMissingAppId = true;
+			logInfo('game-detail container found but could not resolve an appid from location or header image');
 		}
 		return;
 	}
@@ -106,23 +145,9 @@ function handleMutation(): void {
 		return;
 	}
 
-	const topDoc = topWindow()?.document;
-	if (!topDoc) {
-		return;
-	}
-
-	const container = topDoc.querySelector<HTMLElement>(CONTAINER_SELECTOR);
-	if (!container) {
-		if (loggedMissingContainerFor !== appid) {
-			loggedMissingContainerFor = appid;
-			logInfo(`game page detected (appid=${appid}) but container selector "${CONTAINER_SELECTOR}" found nothing`);
-		}
-		return;
-	}
-
 	unmount();
 	currentAppId = appid;
-	loggedMissingContainerFor = null;
+	loggedMissingAppId = false;
 	logInfo(`mounting game badge for appid=${appid}`);
 
 	try {
@@ -140,12 +165,11 @@ function handleMutation(): void {
 
 let installed = false;
 
-/** Watches the real top-level Steam window's DOM (not this plugin's own
- * iframe -- see the block comment above) for the desktop game-detail
- * page and mounts GameTagBadge directly into it. Idempotent -- calling
- * this more than once (e.g. a plugin reload) is a no-op after the first.
- * Gamepad/Big Picture mode isn't handled yet -- this silently no-ops in
- * that mode rather than throwing, same as it does on any other
+/** Watches the real top-level Steam window's DOM for the desktop
+ * game-detail page and mounts GameTagBadge directly into it. Idempotent
+ * -- calling this more than once (e.g. a plugin reload) is a no-op after
+ * the first. Gamepad/Big Picture mode isn't handled yet -- this silently
+ * no-ops in that mode rather than throwing, same as it does on any other
  * non-game-detail page. */
 export function patchLibraryApp(): void {
 	if (installed) {
