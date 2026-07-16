@@ -22,21 +22,44 @@ import { logError, logInfo } from './log';
 // before it ever got to check whether the container existed, even though
 // the container itself is reachable once you're actually on a game page.
 //
-// Fixed by inverting the order: look for the container first (cheap,
-// reliable), and only then try to resolve an appid -- first via
-// MainWindowBrowserManager in case it's available on some other
-// Millennium/Steam version, and if not, by reading it out of the game's
-// own store/library header image URL, which Steam's CDN always serves as
-// .../store_item_assets/steam/apps/{appid}/{hash}/header.jpg.
+// Fixed the ordering (look for the container first, resolve an appid
+// only once one's found), but the very next real-device test still came
+// back with the container never found at all -- despite the *same*
+// hashed class (._1EAxK56o5a9Nieu5HYkJ4k) having been verified moments
+// earlier via the user's own DevTools element picker. The most likely
+// explanation: that class name is webpack-build-hashed, and picking it
+// up again required restarting Steam to load the new plugin build --
+// which is exactly the kind of event that can regenerate those hashes.
+// A hashed class was never going to be a stable anchor across sessions.
+//
+// The icon row's actual buttons carry real aria-label text ("Manage",
+// "Configure Controller", ...) for accessibility, which is far more
+// likely to stay stable across Steam updates than a build hash --
+// findContainer() now tries that first and only falls back to the
+// hashed class as a secondary attempt.
 const APP_ID_PATTERN = /\/app\/(\d+)/;
 const HEADER_IMAGE_APP_ID_PATTERN = /store_item_assets\/steam\/apps\/(\d+)\//;
 
-// The container Steam renders the game-detail page's icon row (gear /
-// controller / info / heart) into -- found via the user's own DevTools
-// element picker on a real game page, not guessed. Still a webpack-hashed
-// class name, so it can drift across Steam Client updates.
-const CONTAINER_SELECTOR = '._1EAxK56o5a9Nieu5HYkJ4k';
+// Fallback only -- see findContainer(). Verified once via the user's own
+// DevTools element picker on a real game page, but a webpack-hashed class
+// name like this can drift across Steam Client updates/restarts.
+const CONTAINER_SELECTOR_FALLBACK = '._1EAxK56o5a9Nieu5HYkJ4k';
+const MANAGE_BUTTON_SELECTOR = '[aria-label="Manage"]';
 const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
+
+/** The icon row Steam renders on the game-detail page (gear / controller
+ * / info / heart). Prefers anchoring off the "Manage" (gear icon)
+ * button's stable aria-label and using its parent as the row container,
+ * falling back to the last-known hashed class if that ever stops
+ * matching (e.g. a non-English Steam client, where aria-label text is
+ * localized). */
+function findContainer(doc: Document): HTMLElement | null {
+	const manageButton = doc.querySelector<HTMLElement>(MANAGE_BUTTON_SELECTOR);
+	if (manageButton?.parentElement) {
+		return manageButton.parentElement;
+	}
+	return doc.querySelector<HTMLElement>(CONTAINER_SELECTOR_FALLBACK);
+}
 
 declare global {
 	interface Window {
@@ -70,7 +93,9 @@ function diagnoseExecutionContext(): void {
 	const top = topWindow();
 	let topDocDetail = 'unreachable';
 	try {
-		topDocDetail = top?.document ? `rootId=${top.document.getElementById('root') ? 'found' : 'missing'}, containerFound=${Boolean(top.document.querySelector(CONTAINER_SELECTOR))}` : 'no document';
+		topDocDetail = top?.document
+			? `rootId=${top.document.getElementById('root') ? 'found' : 'missing'}, manageButtonFound=${Boolean(top.document.querySelector(MANAGE_BUTTON_SELECTOR))}, fallbackClassFound=${Boolean(top.document.querySelector(CONTAINER_SELECTOR_FALLBACK))}`
+			: 'no document';
 	} catch (error) {
 		topDocDetail = `threw: ${String(error)}`;
 	}
@@ -123,7 +148,7 @@ function handleMutation(): void {
 		return;
 	}
 
-	const container = topDoc.querySelector<HTMLElement>(CONTAINER_SELECTOR);
+	const container = findContainer(topDoc);
 	if (!container) {
 		if (currentAppId !== null) {
 			unmount();
