@@ -11,6 +11,54 @@ export interface GameSnapshot {
 	unlockedAchievements: number;
 }
 
+type GetAllAppsFn = () => SteamAppOverview[];
+
+function getAllAppsBinding(): GetAllAppsFn | null {
+	const client = window as unknown as { SteamClient?: { Apps?: { GetAllApps?: GetAllAppsFn } } };
+	return client.SteamClient?.Apps?.GetAllApps ?? null;
+}
+
+let cachedApps: Map<number, SteamAppOverview> | null = null;
+let cachedAt = 0;
+const CACHE_TTL_MS = 30_000;
+
+function refreshAppsCache(): Map<number, SteamAppOverview> {
+	const apps = getAllAppsBinding()?.() ?? [];
+	const map = new Map<number, SteamAppOverview>();
+	for (const app of apps) {
+		map.set(app.appid, app);
+	}
+	cachedApps = map;
+	cachedAt = Date.now();
+	return map;
+}
+
+/**
+ * SteamClient.Apps.GetAllApps() reliably returns every owned app when
+ * called once (it's what library enumeration already relies on for all
+ * 388+ appids), but calling it fresh for *every single game* in a tight
+ * loop -- as the original version of readGameSnapshot() did, once per
+ * game during a full-library sync -- returned an incomplete result for
+ * most of them: a real-device full sync came back with only 4 out of
+ * 389 games correctly named, the rest falling back to "Unknown Game
+ * (appid)" with 0 playtime. Caching one snapshot and reusing it (falling
+ * back to a single forced refresh only on a genuine cache miss, e.g. a
+ * shortcut added after the cache was built) avoids hammering that API
+ * while still self-healing for anything actually new. A 30s TTL keeps
+ * interactive single-page visits (not part of a tight loop) reasonably
+ * fresh without needing to refresh on every lookup.
+ */
+function findOverview(appid: number): SteamAppOverview | null {
+	const isStale = cachedApps === null || Date.now() - cachedAt > CACHE_TTL_MS;
+	let map = isStale ? refreshAppsCache() : (cachedApps as Map<number, SteamAppOverview>);
+	let overview = map.get(appid) ?? null;
+	if (!overview && !isStale) {
+		map = refreshAppsCache();
+		overview = map.get(appid) ?? null;
+	}
+	return overview;
+}
+
 /**
  * window.appStore.GetAppOverviewByAppID(appid) (this function's original
  * implementation) turned out to be unreachable: Millennium's own loader
@@ -19,25 +67,15 @@ export interface GameSnapshot {
  * 'library-tracker'") -- the same mechanism browser extension content
  * scripts use, sharing the real page's DOM but deliberately *not*
  * sharing page-defined JS globals like window.appStore, which only
- * exists in the real page's own main-world script realm. Confirmed via
- * the Logs panel: routing the lookup through the resolved real window
- * (same trick that fixed DOM access) still failed with "appStore
- * unreachable" -- an isolated world's `window` reference to another
- * world's globals is fundamentally different from a DOM reference, which
- * is why the DOM-access fix didn't carry over here.
+ * exists in the real page's own main-world script realm.
  *
  * SteamClient.Apps.GetAllApps() is a native CEF binding rather than a
- * page-JS singleton (same reasoning as GetMyAchievementsForApp below,
- * and already relied on successfully for library enumeration in
- * libraryEnumeration.ts), so it crosses the isolated-world boundary
- * fine. Not part of @steambrew/client's typed SDK, hence the untyped
- * cast -- matching the pattern libraryEnumeration.ts already uses for
- * the same API.
+ * page-JS singleton, so it crosses the isolated-world boundary fine --
+ * see findOverview() above for why it's cached rather than called fresh
+ * per game.
  */
 export async function readGameSnapshot(appid: number): Promise<GameSnapshot> {
-	const client = window as unknown as { SteamClient?: { Apps?: { GetAllApps?: () => SteamAppOverview[] } } };
-	const allApps = client.SteamClient?.Apps?.GetAllApps?.() ?? [];
-	const overview = allApps.find((app) => app.appid === appid) ?? null;
+	const overview = findOverview(appid);
 	if (!overview) {
 		logError(`readGameSnapshot(${appid}): appid not found in SteamClient.Apps.GetAllApps()`, new Error('overview not found'));
 	}
