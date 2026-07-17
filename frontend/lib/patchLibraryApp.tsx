@@ -55,11 +55,26 @@ const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
  * button's stable aria-label and using its parent as the row container,
  * falling back to the last-known hashed class if that ever stops
  * matching (e.g. a non-English Steam client, where aria-label text is
- * localized). */
+ * localized).
+ *
+ * There can be more than one [aria-label="Manage"] element in the DOM at
+ * once -- confirmed via the user's own DevTools aria-label dump, which
+ * showed two "Manage"/"Configure Controller" pairs -- and the badge was
+ * mounting successfully (real content, real non-zero getBoundingClientRect)
+ * but at y=99, nowhere near the actual icon row visible around y=372 in a
+ * screenshot of the same moment. document.querySelector() only ever
+ * returns the *first* match in document order, which was apparently a
+ * hidden/off-screen duplicate, not the one actually on screen. Filters
+ * for one with real layout (non-zero size and an offsetParent, i.e. not
+ * display:none or detached) instead of blindly taking the first. */
 function findContainer(doc: Document): HTMLElement | null {
-	const manageButton = doc.querySelector<HTMLElement>(MANAGE_BUTTON_SELECTOR);
-	if (manageButton?.parentElement) {
-		return manageButton.parentElement;
+	const manageButtons = Array.from(doc.querySelectorAll<HTMLElement>(MANAGE_BUTTON_SELECTOR));
+	const visibleManageButton = manageButtons.find((el) => {
+		const rect = el.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+	});
+	if (visibleManageButton?.parentElement) {
+		return visibleManageButton.parentElement;
 	}
 	return doc.querySelector<HTMLElement>(CONTAINER_SELECTOR_FALLBACK);
 }
@@ -373,7 +388,8 @@ function handleMutation(): void {
 	unmount();
 	currentAppId = appid;
 	loggedMissingAppId = false;
-	logInfo(`mounting game badge for appid=${appid}`);
+	const containerRect = container.getBoundingClientRect();
+	logInfo(`mounting game badge for appid=${appid}, containerRect=[x=${containerRect.x}, y=${containerRect.y}, w=${containerRect.width}, h=${containerRect.height}]`);
 
 	try {
 		const root = topDoc.createElement('div');
