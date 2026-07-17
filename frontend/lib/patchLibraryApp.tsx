@@ -319,21 +319,48 @@ function appIdFromLocation(): number | null {
 	return match ? Number(match[1]) : null;
 }
 
-/** Steam always serves a game's official header art from a URL embedding
- * its appid (.../store_item_assets/steam/apps/{appid}/.../header.jpg) --
- * unlike the CDN paths used for recommendation-rail/community thumbnails
- * elsewhere on the page, so this specific pattern is a reasonably safe
- * document-wide search rather than needing to scope to a container
- * ancestor Steam's DOM structure doesn't give us a reliable handle on. */
+let loggedHeaderImageCandidates = false;
+
+/** Steam serves a *lot* of images embedding the same
+ * store_item_assets/steam/apps/{appid}/... URL shape on a single library
+ * page, not just the current game's own hero banner -- recommendation
+ * rails, "Community Content" thumbnails, and DLC/"Additional Content"
+ * tiles for entirely different games all matched the same pattern.
+ * Real-device logs showed the resolved appid changing between different
+ * wrong values on every single mutation event while parked on one game's
+ * page (35140, 4791830, 3986520, ...), confirming this was picking
+ * essentially whichever matching <img> happened to be first in DOM
+ * order, not anything scoped to "the game this page is actually about."
+ *
+ * The one thing that reliably sets the real hero banner apart from
+ * every other matching image on the page is size -- it's far larger
+ * (spans most of the viewport width) than any thumbnail or rail image,
+ * so this picks whichever match has the largest rendered area instead
+ * of the first one found. */
 function appIdFromHeaderImage(doc: Document): number | null {
+	const candidates: { appid: number; area: number }[] = [];
 	for (const img of Array.from(doc.querySelectorAll('img'))) {
 		const src = img.currentSrc || img.src;
 		const match = src.match(HEADER_IMAGE_APP_ID_PATTERN);
-		if (match) {
-			return Number(match[1]);
+		if (!match) {
+			continue;
+		}
+		const rect = img.getBoundingClientRect();
+		candidates.push({ appid: Number(match[1]), area: rect.width * rect.height });
+	}
+
+	if (!loggedHeaderImageCandidates && candidates.length > 0) {
+		loggedHeaderImageCandidates = true;
+		logInfo(`header image candidates: ${candidates.map((c) => `appid=${c.appid} area=${Math.round(c.area)}`).join('; ')}`);
+	}
+
+	let best: { appid: number; area: number } | null = null;
+	for (const candidate of candidates) {
+		if (!best || candidate.area > best.area) {
+			best = candidate;
 		}
 	}
-	return null;
+	return best ? best.appid : null;
 }
 
 function unmount(): void {
