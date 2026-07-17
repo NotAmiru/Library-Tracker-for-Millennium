@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
-import { ErrorBoundary, routerHook } from '@steambrew/client';
+import { ErrorBoundary, Router, routerHook } from '@steambrew/client';
 import type { ReactNode } from 'react';
 import type { RouteComponentProps, RouteProps } from 'react-router';
 import { GameTagBadge } from '../components/GameTagBadge';
@@ -78,13 +78,55 @@ let mountedContainer: HTMLElement | null = null;
 let currentAppId: number | null = null;
 let loggedMissingAppId = false;
 
-/** The real top-level Steam window, if reachable from this plugin's own
- * execution context -- kept as a fallback path (rather than assuming
- * `window` is always correct) in case a future Millennium version does
- * run plugin scripts inside a real iframe of the main window; same-origin
- * access can still throw, so every caller treats a thrown/undefined
- * result as "not reachable" rather than crashing the whole plugin. */
-function topWindow(): Window | null {
+/** window.top turned out to be a dead end -- confirmed via the user's own
+ * DevTools (a screen recording comparing document.querySelectorAll('[aria-
+ * label]') between our plugin's own console and the real page's: 0 vs 15)
+ * that this plugin's script runs in a genuinely separate, isolated
+ * top-level browsing context with no parent/child DOM relationship to the
+ * real page at all, so window.top just resolves back to itself.
+ *
+ * @steambrew/client's `Router` module (Router.ts) is reflected via the
+ * same webpack-module-search mechanism that routerHook's constructor uses
+ * successfully (confirmed: hasRouteComponent/hasDesktopRouteComponent
+ * both true), and it exposes Router.WindowStore.SteamUIWindows -- an
+ * array Steam itself maintains of every real UI window, each carrying an
+ * actual `BrowserWindow: Window` reference. That's a real object
+ * reference handed to us by Steam's own reflected internals, not
+ * something we have to reach for via window.top/opener, so same-origin
+ * restrictions that blocked window.top shouldn't apply here.
+ *
+ * Since we don't know in advance which entry is the real desktop library
+ * window (name strings aren't confirmed stable), this picks whichever
+ * window's document has the most [aria-label] elements -- a cheap proxy
+ * for "this is the real, content-rich page" that doesn't depend on
+ * guessing a specific window name. */
+function resolveRealWindow(): Window | null {
+	try {
+		const entries = Router.WindowStore?.SteamUIWindows ?? [];
+		let best: Window | null = null;
+		let bestScore = -1;
+		for (const entry of entries) {
+			const candidate = entry?.BrowserWindow;
+			if (!candidate) {
+				continue;
+			}
+			let score = -1;
+			try {
+				score = candidate.document?.querySelectorAll('[aria-label]').length ?? -1;
+			} catch {
+				score = -1;
+			}
+			if (score > bestScore) {
+				bestScore = score;
+				best = candidate;
+			}
+		}
+		if (best && bestScore > 0) {
+			return best;
+		}
+	} catch {
+		// fall through to the legacy window.top guess below
+	}
 	try {
 		return window.top && window.top !== window ? window.top : window;
 	} catch {
@@ -92,23 +134,42 @@ function topWindow(): Window | null {
 	}
 }
 
+function diagnoseSteamWindows(): void {
+	try {
+		const entries = Router.WindowStore?.SteamUIWindows ?? [];
+		const details = entries.map((entry, index) => {
+			const win = entry?.BrowserWindow;
+			let ariaCount: string;
+			try {
+				ariaCount = String(win?.document?.querySelectorAll('[aria-label]').length ?? 'no-document');
+			} catch (error) {
+				ariaCount = `threw: ${String(error)}`;
+			}
+			return `[${index}] name=${win?.name ?? 'unknown'} ariaLabelCount=${ariaCount}`;
+		});
+		logInfo(`Steam windows diagnostic: hasWindowStore=${Boolean(Router.WindowStore)}, count=${entries.length}, ${details.join('; ')}`);
+	} catch (error) {
+		logError('Steam windows diagnostic failed', error);
+	}
+}
+
 function diagnoseExecutionContext(): void {
-	const top = topWindow();
+	const top = resolveRealWindow();
 	let topDocDetail = 'unreachable';
 	try {
 		topDocDetail = top?.document
-			? `rootId=${top.document.getElementById('root') ? 'found' : 'missing'}, manageButtonFound=${Boolean(top.document.querySelector(MANAGE_BUTTON_SELECTOR))}, fallbackClassFound=${Boolean(top.document.querySelector(CONTAINER_SELECTOR_FALLBACK))}`
+			? `rootId=${top.document.getElementById('root') ? 'found' : 'missing'}, manageButtonFound=${Boolean(top.document.querySelector(MANAGE_BUTTON_SELECTOR))}, fallbackClassFound=${Boolean(top.document.querySelector(CONTAINER_SELECTOR_FALLBACK))}, ariaLabelCount=${top.document.querySelectorAll('[aria-label]').length}`
 			: 'no document';
 	} catch (error) {
 		topDocDetail = `threw: ${String(error)}`;
 	}
 	logInfo(
 		`execution context diagnostic: isIframe=${window.top !== window}, ` +
-			`topReachable=${top !== null}, topDoc=[${topDocDetail}], ` +
+			`resolvedRealWindow=${top !== null}, resolvedDoc=[${topDocDetail}], ` +
 			`ownRootId=${document.getElementById('root') ? 'found' : 'missing'}, ` +
 			`ownAriaLabelCount=${document.querySelectorAll('[aria-label]').length}, ` +
 			`hasMainWindowBrowserManagerOnOwnWindow=${Boolean(window.MainWindowBrowserManager)}, ` +
-			`hasMainWindowBrowserManagerOnTop=${Boolean(top?.MainWindowBrowserManager)}`,
+			`hasMainWindowBrowserManagerOnResolved=${Boolean(top?.MainWindowBrowserManager)}`,
 	);
 }
 
@@ -248,7 +309,7 @@ function installRouterHookPatch(): void {
 }
 
 function appIdFromLocation(): number | null {
-	const pathname = topWindow()?.MainWindowBrowserManager?.m_lastLocation?.pathname;
+	const pathname = resolveRealWindow()?.MainWindowBrowserManager?.m_lastLocation?.pathname;
 	if (!pathname) {
 		return null;
 	}
@@ -282,7 +343,7 @@ function unmount(): void {
 }
 
 function handleMutation(): void {
-	const topDoc = topWindow()?.document;
+	const topDoc = resolveRealWindow()?.document;
 	if (!topDoc) {
 		return;
 	}
@@ -341,13 +402,14 @@ export function patchLibraryApp(): void {
 	}
 	installed = true;
 
+	diagnoseSteamWindows();
 	diagnoseExecutionContext();
 	diagnoseRouterHook();
 	sniffRoutePaths();
 	installRouterHookPatch();
 
 	try {
-		const topDoc = topWindow()?.document;
+		const topDoc = resolveRealWindow()?.document;
 		if (!topDoc) {
 			logError('cannot install game-detail page observer: top window/document unreachable', new Error('no top document'));
 			return;
