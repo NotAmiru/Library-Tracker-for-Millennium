@@ -55,11 +55,10 @@ let loggedManageCandidates = false;
 
 /** One-shot, called the first time findContainer() runs against a
  * document with at least one [aria-label="Manage"] match -- dumps every
- * candidate's own rect and whether it has a "Configure Controller"
- * sibling, so a *third* wrong guess here (two already failed: first the
- * "first DOM match" blindly, then "first with real layout") is
- * diagnosable in one shot from the Logs panel instead of yet another
- * screenshot-and-guess round. */
+ * candidate's own rect and where (if anywhere) findRowAncestor() thinks
+ * its row is, so any *further* wrong guess here is diagnosable in one
+ * shot from the Logs panel instead of another screenshot-and-guess
+ * round. */
 function logManageButtonCandidates(buttons: HTMLElement[]): void {
 	if (loggedManageCandidates || buttons.length === 0) {
 		return;
@@ -67,48 +66,65 @@ function logManageButtonCandidates(buttons: HTMLElement[]): void {
 	loggedManageCandidates = true;
 	const details = buttons.map((el, index) => {
 		const rect = el.getBoundingClientRect();
-		const hasControllerSibling = Boolean(el.parentElement?.querySelector(CONTROLLER_BUTTON_SELECTOR));
-		return `[${index}] rect=[x=${rect.x},y=${rect.y},w=${rect.width},h=${rect.height}] offsetParent=${el.offsetParent !== null} parentChildCount=${el.parentElement?.children.length ?? 0} hasControllerSibling=${hasControllerSibling}`;
+		const row = findRowAncestor(el);
+		const rowDetail = row ? `rowRect=[x=${row.getBoundingClientRect().x},y=${row.getBoundingClientRect().y}],rowChildCount=${row.children.length}` : 'no-row-found';
+		return `[${index}] rect=[x=${rect.x},y=${rect.y},w=${rect.width},h=${rect.height}] offsetParent=${el.offsetParent !== null} ${rowDetail}`;
 	});
 	logInfo(`Manage button candidates: count=${buttons.length}, ${details.join('; ')}`);
 }
 
+const ROW_ANCESTOR_SEARCH_DEPTH = 5;
+
+/** Walks up from a Manage button looking for the ancestor that's
+ * actually the shared icon row (i.e. also contains a "Configure
+ * Controller" descendant), rather than assuming the row is the
+ * *immediate* parent. The candidate diagnostic log showed
+ * parentChildCount=1 for both Manage buttons on a real page -- Steam
+ * wraps each icon in its own single-child focus/tooltip wrapper first,
+ * so the immediate parent is never the row; the row is a few levels
+ * further up. */
+function findRowAncestor(button: HTMLElement): HTMLElement | null {
+	let node: HTMLElement | null = button.parentElement;
+	for (let depth = 0; node && depth < ROW_ANCESTOR_SEARCH_DEPTH; depth++) {
+		if (node.querySelector(CONTROLLER_BUTTON_SELECTOR)) {
+			return node;
+		}
+		node = node.parentElement;
+	}
+	return null;
+}
+
 /** The icon row Steam renders on the game-detail page (gear / controller
- * / info / heart). Prefers anchoring off the "Manage" (gear icon)
- * button's stable aria-label and using its parent as the row container,
- * falling back to the last-known hashed class if that ever stops
- * matching (e.g. a non-English Steam client, where aria-label text is
- * localized).
+ * / info / heart). Anchors off the "Manage" (gear icon) button's stable
+ * aria-label, falling back to the last-known hashed class if that ever
+ * stops matching (e.g. a non-English Steam client, where aria-label text
+ * is localized).
  *
  * There can be more than one [aria-label="Manage"] element in the DOM at
- * once -- confirmed via the user's own DevTools aria-label dump, which
- * showed two "Manage"/"Configure Controller" pairs. Two heuristics have
- * already failed here: blindly taking the first DOM match landed on a
- * hidden/off-screen duplicate (y=99 vs the real y=372); requiring real
- * layout (non-zero size, connected) still landed on a second, smaller,
- * *visibly rendered* duplicate elsewhere on the page (y=74, a 42x32
- * box -- too small to be the actual multi-icon row). This adds a third
- * filter, requiring a "Configure Controller" sibling (the real icon row
- * has one, a lone duplicate button likely doesn't), and among whatever's
- * left prefers the one furthest down the page, since Steam's real
- * hero-banner icon row sits below any top-of-window chrome a duplicate
- * might belong to. */
+ * once -- confirmed via the user's own DevTools aria-label dump. Prior
+ * fixes here failed for two different reasons: blindly taking the first
+ * DOM match landed on a hidden/off-screen duplicate; requiring a
+ * same-parent "Configure Controller" sibling filtered out *both* real
+ * candidates, because it turns out neither Manage button's immediate
+ * parent contains the other icons at all -- Steam wraps each icon in its
+ * own single-child wrapper first (parentChildCount=1 for both, per the
+ * candidate diagnostic log), so the real shared row is a few DOM levels
+ * further up. findRowAncestor() walks up looking for that row instead of
+ * assuming it's one specific fixed depth, and among whichever Manage
+ * buttons actually resolve to a row this way, prefers the one furthest
+ * down the page (the real hero-banner icon row sits below any
+ * top-of-window chrome a duplicate might belong to). */
 function findContainer(doc: Document): HTMLElement | null {
 	const manageButtons = Array.from(doc.querySelectorAll<HTMLElement>(MANAGE_BUTTON_SELECTOR));
 	logManageButtonCandidates(manageButtons);
 
-	const candidates = manageButtons.filter((el) => {
-		const rect = el.getBoundingClientRect();
-		if (rect.width <= 0 || rect.height <= 0 || el.offsetParent === null) {
-			return false;
-		}
-		return Boolean(el.parentElement?.querySelector(CONTROLLER_BUTTON_SELECTOR));
-	});
-	candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+	const rows = manageButtons
+		.map((button) => findRowAncestor(button))
+		.filter((row): row is HTMLElement => row !== null)
+		.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
 
-	const best = candidates[0];
-	if (best?.parentElement) {
-		return best.parentElement;
+	if (rows[0]) {
+		return rows[0];
 	}
 	return doc.querySelector<HTMLElement>(CONTAINER_SELECTOR_FALLBACK);
 }
