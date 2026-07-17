@@ -78,6 +78,24 @@ export function getAllOwnedAppIds(): number[] {
 	return dedupeAppIds(resolveAppOverviews().overviews);
 }
 
+// Real Steam appids are sequential-ish and, as of 2026, nowhere near this
+// high -- comfortably generous headroom for real future growth. Added
+// after a real-device sync log showed entries like 2404564240, 3529522633,
+// and 2793264736 mixed in with real appids: multi-billion-range garbage
+// from one of the fallback enumeration sources (likely a non-game
+// collection entry or similar, not an actual owned app), coinciding with
+// two Millennium native-host crashes (EXCEPTION_ACCESS_VIOLATION at the
+// identical instruction address both times -- a deterministic bug, not a
+// timing issue) during a full-library sync. Filtering these out before
+// they ever reach a backend RPC call is a defensive measure on our end
+// regardless of whatever exactly Millennium's native code does with an
+// out-of-range value.
+const MAX_PLAUSIBLE_APP_ID = 10_000_000;
+
+function isPlausibleAppId(appid: number): boolean {
+	return Number.isInteger(appid) && appid > 0 && appid <= MAX_PLAUSIBLE_APP_ID;
+}
+
 /**
  * Same resolution as getAllOwnedAppIds(), but keyed by appid for
  * per-game lookups (name, playtime, etc.) -- steamData.ts's
@@ -89,7 +107,7 @@ export function getAllOwnedAppIds(): number[] {
 export function getAppOverviewMap(): Map<number, SteamAppOverview> {
 	const map = new Map<number, SteamAppOverview>();
 	for (const overview of resolveAppOverviews().overviews) {
-		if (overview.appid > 0) {
+		if (isPlausibleAppId(overview.appid)) {
 			map.set(overview.appid, overview);
 		}
 	}
@@ -98,10 +116,16 @@ export function getAppOverviewMap(): Map<number, SteamAppOverview> {
 
 function dedupeAppIds(overviews: SteamAppOverview[]): number[] {
 	const ids = new Set<number>();
+	let filteredOut = 0;
 	for (const overview of overviews) {
-		if (overview.appid > 0) {
+		if (isPlausibleAppId(overview.appid)) {
 			ids.add(overview.appid);
+		} else if (overview.appid > 0) {
+			filteredOut += 1;
 		}
+	}
+	if (filteredOut > 0) {
+		logInfo(`getAllOwnedAppIds: filtered out ${filteredOut} implausible appid(s) (> ${MAX_PLAUSIBLE_APP_ID})`);
 	}
 	return Array.from(ids);
 }
