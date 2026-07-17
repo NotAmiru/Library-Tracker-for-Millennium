@@ -48,7 +48,30 @@ const HEADER_IMAGE_APP_ID_PATTERN = /store_item_assets\/steam\/apps\/(\d+)\//;
 // name like this can drift across Steam Client updates/restarts.
 const CONTAINER_SELECTOR_FALLBACK = '._1EAxK56o5a9Nieu5HYkJ4k';
 const MANAGE_BUTTON_SELECTOR = '[aria-label="Manage"]';
+const CONTROLLER_BUTTON_SELECTOR = '[aria-label="Configure Controller"]';
 const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
+
+let loggedManageCandidates = false;
+
+/** One-shot, called the first time findContainer() runs against a
+ * document with at least one [aria-label="Manage"] match -- dumps every
+ * candidate's own rect and whether it has a "Configure Controller"
+ * sibling, so a *third* wrong guess here (two already failed: first the
+ * "first DOM match" blindly, then "first with real layout") is
+ * diagnosable in one shot from the Logs panel instead of yet another
+ * screenshot-and-guess round. */
+function logManageButtonCandidates(buttons: HTMLElement[]): void {
+	if (loggedManageCandidates || buttons.length === 0) {
+		return;
+	}
+	loggedManageCandidates = true;
+	const details = buttons.map((el, index) => {
+		const rect = el.getBoundingClientRect();
+		const hasControllerSibling = Boolean(el.parentElement?.querySelector(CONTROLLER_BUTTON_SELECTOR));
+		return `[${index}] rect=[x=${rect.x},y=${rect.y},w=${rect.width},h=${rect.height}] offsetParent=${el.offsetParent !== null} parentChildCount=${el.parentElement?.children.length ?? 0} hasControllerSibling=${hasControllerSibling}`;
+	});
+	logInfo(`Manage button candidates: count=${buttons.length}, ${details.join('; ')}`);
+}
 
 /** The icon row Steam renders on the game-detail page (gear / controller
  * / info / heart). Prefers anchoring off the "Manage" (gear icon)
@@ -59,22 +82,33 @@ const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
  *
  * There can be more than one [aria-label="Manage"] element in the DOM at
  * once -- confirmed via the user's own DevTools aria-label dump, which
- * showed two "Manage"/"Configure Controller" pairs -- and the badge was
- * mounting successfully (real content, real non-zero getBoundingClientRect)
- * but at y=99, nowhere near the actual icon row visible around y=372 in a
- * screenshot of the same moment. document.querySelector() only ever
- * returns the *first* match in document order, which was apparently a
- * hidden/off-screen duplicate, not the one actually on screen. Filters
- * for one with real layout (non-zero size and an offsetParent, i.e. not
- * display:none or detached) instead of blindly taking the first. */
+ * showed two "Manage"/"Configure Controller" pairs. Two heuristics have
+ * already failed here: blindly taking the first DOM match landed on a
+ * hidden/off-screen duplicate (y=99 vs the real y=372); requiring real
+ * layout (non-zero size, connected) still landed on a second, smaller,
+ * *visibly rendered* duplicate elsewhere on the page (y=74, a 42x32
+ * box -- too small to be the actual multi-icon row). This adds a third
+ * filter, requiring a "Configure Controller" sibling (the real icon row
+ * has one, a lone duplicate button likely doesn't), and among whatever's
+ * left prefers the one furthest down the page, since Steam's real
+ * hero-banner icon row sits below any top-of-window chrome a duplicate
+ * might belong to. */
 function findContainer(doc: Document): HTMLElement | null {
 	const manageButtons = Array.from(doc.querySelectorAll<HTMLElement>(MANAGE_BUTTON_SELECTOR));
-	const visibleManageButton = manageButtons.find((el) => {
+	logManageButtonCandidates(manageButtons);
+
+	const candidates = manageButtons.filter((el) => {
 		const rect = el.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+		if (rect.width <= 0 || rect.height <= 0 || el.offsetParent === null) {
+			return false;
+		}
+		return Boolean(el.parentElement?.querySelector(CONTROLLER_BUTTON_SELECTOR));
 	});
-	if (visibleManageButton?.parentElement) {
-		return visibleManageButton.parentElement;
+	candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+
+	const best = candidates[0];
+	if (best?.parentElement) {
+		return best.parentElement;
 	}
 	return doc.querySelector<HTMLElement>(CONTAINER_SELECTOR_FALLBACK);
 }
