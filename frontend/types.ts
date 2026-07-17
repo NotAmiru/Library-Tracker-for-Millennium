@@ -52,3 +52,27 @@ export interface GetHltbDataResult {
 	success: boolean;
 	hltb: HltbData | null;
 }
+
+export interface SyncQueue {
+	pending: (number | string)[];
+	total: number;
+}
+
+export interface StartSyncQueueResult {
+	success: boolean;
+	total: number;
+}
+
+export interface GetSyncQueueResult {
+	success: boolean;
+	queue?: SyncQueue;
+}
+
+export interface PopSyncQueueResult {
+	success: boolean;
+	remaining: number;
+}
+
+export interface ClearSyncQueueResult {
+	success: boolean;
+}

@@ -1,9 +1,13 @@
 import { callable } from '@steambrew/client';
 
-/** Matches @steambrew/client's own IPCType -- callable() can only carry
- * flat string/number/boolean values across the JS<->Lua bridge, not
- * nested objects/arrays, per its actual type signature. */
-export type RpcParams = Record<string, string | number | boolean>;
+/** callable()'s own IPCType constraint (string | number | boolean | void)
+ * only applies to its *direct* argument -- the single-key { data: string }
+ * object jsonRpc() always wraps params in below. Since `params` itself is
+ * JSON.stringify()'d into that one string before ever reaching callable(),
+ * it can safely be any JSON-serializable shape, not just flat scalars --
+ * this only excludes `undefined`/functions/etc., which JSON.stringify
+ * can't represent meaningfully anyway. */
+export type RpcParams = Record<string, string | number | boolean | (string | number)[]>;
 
 /**
  * Wraps a Millennium `callable` RPC route for this plugin's Lua backend

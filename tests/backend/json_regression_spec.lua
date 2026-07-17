@@ -94,5 +94,42 @@ return function()
 	assert(decoded_hltb_missing.success == true)
 	assert(decoded_hltb_missing.hltb == nil, "expected null hltb for an appid that's never been synced")
 
+	-- Sync queue RPCs: same real-JSON-serialization exposure as above,
+	-- specifically for the empty-pending-array case sync_queue.lua's
+	-- encode_queue() exists to handle correctly (see its own comment).
+	local no_queue_response = main.get_sync_queue()
+	local decoded_no_queue = cjson.decode(no_queue_response)
+	assert(decoded_no_queue.success == true)
+	assert(decoded_no_queue.queue == nil, "expected no queue before start_sync_queue")
+
+	local start_response = main.start_sync_queue(cjson.encode({ appids = { 730, 440 } }))
+	local decoded_start = cjson.decode(start_response)
+	assert(decoded_start.success == true and decoded_start.total == 2)
+
+	local queue_response = main.get_sync_queue()
+	local decoded_queue = cjson.decode(queue_response)
+	assert(decoded_queue.success == true)
+	assert(type(decoded_queue.queue.pending) == "table" and #decoded_queue.queue.pending == 2)
+
+	main.pop_sync_queue(cjson.encode({ appid = 730 }))
+	local drained_response = main.pop_sync_queue(cjson.encode({ appid = 440 }))
+	local decoded_drained = cjson.decode(drained_response)
+	assert(decoded_drained.success == true and decoded_drained.remaining == 0)
+
+	-- The now-empty pending list must still round-trip as a JSON array,
+	-- not an object -- exactly the bug encode_array()/encode_queue() were
+	-- written to prevent.
+	local empty_queue_response = main.get_sync_queue()
+	assert(
+		empty_queue_response:find('"pending":%[%]', 1, false) ~= nil,
+		"expected an empty pending list to encode as a JSON array, got: " .. empty_queue_response
+	)
+
+	local clear_response = main.clear_sync_queue()
+	local decoded_clear = cjson.decode(clear_response)
+	assert(decoded_clear.success == true)
+	local after_clear = cjson.decode(main.get_sync_queue())
+	assert(after_clear.queue == nil, "expected no queue after clear_sync_queue")
+
 	print("json_regression_spec: OK")
 end

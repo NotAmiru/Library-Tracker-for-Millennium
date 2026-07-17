@@ -8,6 +8,7 @@ local sync = require("sync")
 local queries = require("queries")
 local dropped_sweep = require("dropped_sweep")
 local hltb_cache = require("hltb_cache")
+local sync_queue = require("sync_queue")
 
 -- RPC-callable functions are defined as plain globals (not locals) and
 -- also listed in the table returned below, matching the convention used
@@ -246,6 +247,62 @@ function log_frontend(data)
 	return json.encode({ success = true })
 end
 
+--- data decodes to { appids }. Starts a fresh full-library sync queue,
+--- discarding any previous one -- used when kicking off a brand new
+--- sync (not a resume). Returns { success, total }.
+function start_sync_queue(data)
+	local params = decode_params(data)
+	local appids = params.appids or {}
+	local ok, err = pcall(sync_queue.start, appids)
+	if not ok then
+		logger:error("start_sync_queue failed: " .. tostring(err))
+		return json.encode({ success = false, error = tostring(err) })
+	end
+	return json.encode({ success = true, total = #appids })
+end
+
+--- Returns whatever full-library sync queue is currently on disk (see
+--- sync_queue.lua for why this exists -- resuming a queue after a
+--- Millennium native-host crash mid-sync, rather than starting the whole
+--- library over from scratch). { success, queue: { pending, total } },
+--- with "queue" omitted entirely when there's no queue in progress.
+function get_sync_queue()
+	local ok, queue = pcall(sync_queue.get)
+	if not ok then
+		logger:error("get_sync_queue failed: " .. tostring(queue))
+		return json.encode({ success = false, error = tostring(queue) })
+	end
+	if queue == nil then
+		return json.encode({ success = true })
+	end
+	return '{"success":true,"queue":{"pending":' .. encode_array(queue.pending) .. ',"total":' .. tostring(queue.total or 0) .. "}}"
+end
+
+--- data decodes to { appid }. Removes appid from the pending queue,
+--- persisted immediately so a crash right after this call still keeps
+--- the progress made on every game synced before it.
+--- Returns { success, remaining }.
+function pop_sync_queue(data)
+	local params = decode_params(data)
+	local ok, queue = pcall(sync_queue.pop, params.appid)
+	if not ok then
+		logger:error("pop_sync_queue failed: " .. tostring(queue))
+		return json.encode({ success = false, error = tostring(queue) })
+	end
+	return json.encode({ success = true, remaining = queue and #queue.pending or 0 })
+end
+
+--- Clears the sync queue (the sync finished, or the caller wants to
+--- restart fresh instead of resuming). Returns { success }.
+function clear_sync_queue()
+	local ok, err = pcall(sync_queue.clear)
+	if not ok then
+		logger:error("clear_sync_queue failed: " .. tostring(err))
+		return json.encode({ success = false, error = tostring(err) })
+	end
+	return json.encode({ success = true })
+end
+
 return {
 	on_load = on_load,
 	on_frontend_loaded = on_frontend_loaded,
@@ -264,4 +321,8 @@ return {
 	check_dropped_games = check_dropped_games,
 	log_frontend = log_frontend,
 	get_hltb_data = get_hltb_data,
+	start_sync_queue = start_sync_queue,
+	get_sync_queue = get_sync_queue,
+	pop_sync_queue = pop_sync_queue,
+	clear_sync_queue = clear_sync_queue,
 }
