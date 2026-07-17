@@ -1,3 +1,4 @@
+import { EAppType } from '@steambrew/client';
 import type { SteamAppOverview } from '@steambrew/client';
 import { logInfo } from './log';
 
@@ -96,6 +97,24 @@ function isPlausibleAppId(appid: number): boolean {
 	return Number.isInteger(appid) && appid > 0 && appid <= MAX_PLAUSIBLE_APP_ID;
 }
 
+// Only actual games (and non-Steam game shortcuts, which are real games
+// the user added manually) get tracked -- soundtracks, SDKs, dedicated
+// servers, tools, demos, DLC, etc. have no playtime/achievements of their
+// own to tag anyway, and were a large share of the earlier "Unknown Game"
+// backlog noise. Cuts the total number of backend RPC calls a full sync
+// makes substantially, which is also the current working theory for the
+// repeated Millennium native-host crash (three real-device crashes at
+// the identical faulting instruction, unaffected by the pacing delay or
+// the implausible-appid filter -- pointing at cumulative call volume over
+// a sync rather than one specific bad value).
+function isTrackableAppType(appType: EAppType): boolean {
+	return appType === EAppType.Game || appType === EAppType.Shortcut;
+}
+
+function isTrackableApp(overview: SteamAppOverview): boolean {
+	return isPlausibleAppId(overview.appid) && isTrackableAppType(overview.app_type);
+}
+
 /**
  * Same resolution as getAllOwnedAppIds(), but keyed by appid for
  * per-game lookups (name, playtime, etc.) -- steamData.ts's
@@ -107,7 +126,7 @@ function isPlausibleAppId(appid: number): boolean {
 export function getAppOverviewMap(): Map<number, SteamAppOverview> {
 	const map = new Map<number, SteamAppOverview>();
 	for (const overview of resolveAppOverviews().overviews) {
-		if (isPlausibleAppId(overview.appid)) {
+		if (isTrackableApp(overview)) {
 			map.set(overview.appid, overview);
 		}
 	}
@@ -118,14 +137,14 @@ function dedupeAppIds(overviews: SteamAppOverview[]): number[] {
 	const ids = new Set<number>();
 	let filteredOut = 0;
 	for (const overview of overviews) {
-		if (isPlausibleAppId(overview.appid)) {
+		if (isTrackableApp(overview)) {
 			ids.add(overview.appid);
 		} else if (overview.appid > 0) {
 			filteredOut += 1;
 		}
 	}
 	if (filteredOut > 0) {
-		logInfo(`getAllOwnedAppIds: filtered out ${filteredOut} implausible appid(s) (> ${MAX_PLAUSIBLE_APP_ID})`);
+		logInfo(`getAllOwnedAppIds: filtered out ${filteredOut} non-game/implausible entr(ies)`);
 	}
 	return Array.from(ids);
 }
