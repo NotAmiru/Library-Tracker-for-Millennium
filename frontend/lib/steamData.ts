@@ -1,5 +1,5 @@
+import type { SteamAppOverview } from '@steambrew/client';
 import { logError } from './log';
-import { resolveRealWindow } from './steamWindow';
 
 export interface GameSnapshot {
 	appid: number;
@@ -12,27 +12,35 @@ export interface GameSnapshot {
 }
 
 /**
- * Reads one app's playtime, display name, and achievement counts straight
- * out of Steam's own in-memory client state (appStore + SteamClient.Apps),
- * with no backend round-trip. These are the same internals Decky-era
- * plugins relied on; SteamAppOverview and GetMyAchievementsForApp are
- * both part of Millennium's typed SDK.
+ * window.appStore.GetAppOverviewByAppID(appid) (this function's original
+ * implementation) turned out to be unreachable: Millennium's own loader
+ * log confirmed it runs each plugin in a Chrome DevTools Protocol
+ * "isolated world" ("Created isolated CDP world for plugin
+ * 'library-tracker'") -- the same mechanism browser extension content
+ * scripts use, sharing the real page's DOM but deliberately *not*
+ * sharing page-defined JS globals like window.appStore, which only
+ * exists in the real page's own main-world script realm. Confirmed via
+ * the Logs panel: routing the lookup through the resolved real window
+ * (same trick that fixed DOM access) still failed with "appStore
+ * unreachable" -- an isolated world's `window` reference to another
+ * world's globals is fundamentally different from a DOM reference, which
+ * is why the DOM-access fix didn't carry over here.
  *
- * window.appStore is a plain JS singleton Steam's own webpack app bundle
- * creates -- unlike SteamClient (a native binding Millennium exposes
- * uniformly everywhere), it only exists within the real page's own
- * script realm. This plugin's script runs in an isolated realm (see
- * steamWindow.ts), so the bare `window.appStore` global is undefined
- * here; goes through resolveRealWindow() instead, same as every DOM
- * lookup in patchLibraryApp.tsx.
+ * SteamClient.Apps.GetAllApps() is a native CEF binding rather than a
+ * page-JS singleton (same reasoning as GetMyAchievementsForApp below,
+ * and already relied on successfully for library enumeration in
+ * libraryEnumeration.ts), so it crosses the isolated-world boundary
+ * fine. Not part of @steambrew/client's typed SDK, hence the untyped
+ * cast -- matching the pattern libraryEnumeration.ts already uses for
+ * the same API.
  */
 export async function readGameSnapshot(appid: number): Promise<GameSnapshot> {
-	const realWindow = resolveRealWindow();
-	if (!realWindow?.appStore) {
-		logError(`readGameSnapshot(${appid}): appStore unreachable on resolved window`, new Error('no appStore'));
-		return { appid, gameName: `Unknown Game (${appid})`, playtimeMinutes: 0, rtLastTimePlayed: null, totalAchievements: 0, unlockedAchievements: 0 };
+	const client = window as unknown as { SteamClient?: { Apps?: { GetAllApps?: () => SteamAppOverview[] } } };
+	const allApps = client.SteamClient?.Apps?.GetAllApps?.() ?? [];
+	const overview = allApps.find((app) => app.appid === appid) ?? null;
+	if (!overview) {
+		logError(`readGameSnapshot(${appid}): appid not found in SteamClient.Apps.GetAllApps()`, new Error('overview not found'));
 	}
-	const overview = realWindow.appStore.GetAppOverviewByAppID(appid);
 
 	const gameName = overview?.display_name ?? `Unknown Game (${appid})`;
 	const playtimeMinutes = overview?.minutes_playtime_forever ?? 0;
