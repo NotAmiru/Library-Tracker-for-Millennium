@@ -1,89 +1,90 @@
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
-import { ErrorBoundary, Router, routerHook } from '@steambrew/client';
-import type { ReactNode } from 'react';
-import type { RouteComponentProps, RouteProps } from 'react-router';
+import { Millennium } from '@steambrew/client';
 import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
-import { resolveRealWindow } from './steamWindow';
 
-// Two earlier approaches here both silently failed on a real desktop
-// Millennium install: routerHook.addPatch('/library/app/:appid', ...)
-// never fired, and a follow-up MutationObserver + document.querySelector
-// approach also never fired. Live-device DevTools diagnostics (run jointly
-// with the user, including a real execution-context dump logged from this
-// exact code -- see diagnoseExecutionContext()) settled where the earlier
-// code comment was wrong: this plugin's script runs directly in the same
-// top-level document as the real Steam UI (Millennium injects into what
-// its own logs call "SharedJSContext", which *is* the real window --
-// isIframe was confirmed false, and document.getElementById('root') finds
-// Steam's own React root). window.top vs window was a dead end.
+// Every earlier approach in this file's history failed for the same
+// underlying reason: this plugin's script runs in its own isolated CDP
+// world (confirmed via Millennium's own loader log: "Created isolated
+// CDP world for plugin 'library-tracker'"), sharing nothing with the
+// real page except, unreliably, some webpack-reflected module/prototype
+// definitions -- not the real DOM, not window-scoped runtime singletons
+// like window.appStore or window.MainWindowBrowserManager. routerHook
+// (React-tree patching), Router.WindowStore (a heuristic "most content"
+// guess at the right window), and manual DOM-injection with
+// MutationObserver polling were all worked through and all had real,
+// confirmed failure modes tied to that isolation.
 //
-// The actual blocker: window.MainWindowBrowserManager -- which the
-// original appid-detection method depended on entirely -- does not exist
-// in this context (confirmed via the same diagnostic dump). So the old
-// code's very first gate (get an appid from that global) always failed
-// before it ever got to check whether the container existed, even though
-// the container itself is reachable once you're actually on a game page.
-//
-// Fixed the ordering (look for the container first, resolve an appid
-// only once one's found), but the very next real-device test still came
-// back with the container never found at all -- despite the *same*
-// hashed class (._1EAxK56o5a9Nieu5HYkJ4k) having been verified moments
-// earlier via the user's own DevTools element picker. The most likely
-// explanation: that class name is webpack-build-hashed, and picking it
-// up again required restarting Steam to load the new plugin build --
-// which is exactly the kind of event that can regenerate those hashes.
-// A hashed class was never going to be a stable anchor across sessions.
-//
-// The icon row's actual buttons carry real aria-label text ("Manage",
-// "Configure Controller", ...) for accessibility, which is far more
-// likely to stay stable across Steam updates than a build hash --
-// findContainer() now tries that first and only falls back to the
-// hashed class as a secondary attempt.
-const APP_ID_PATTERN = /\/app\/(\d+)/;
-const HEADER_IMAGE_APP_ID_PATTERN = /store_item_assets\/steam\/apps\/(\d+)\//;
-
-// Fallback only -- see findContainer(). Verified once via the user's own
-// DevTools element picker on a real game page, but a webpack-hashed class
-// name like this can drift across Steam Client updates/restarts.
-const CONTAINER_SELECTOR_FALLBACK = '._1EAxK56o5a9Nieu5HYkJ4k';
+// The actual fix came from studying a *working* third-party Millennium
+// plugin (steam-easygrid, which does successfully render a button in
+// this exact icon row -- confirmed via its own screenshot) rather than
+// guessing further: it uses Millennium.AddWindowCreateHook to get a
+// direct callback reference to Steam's real desktop popup object the
+// moment it's created. Critically, code running inside that callback can
+// access window-scoped runtime globals like MainWindowBrowserManager
+// directly (as bare identifiers) that are permanently unreachable from
+// this file's own top-level module code -- Millennium apparently
+// bridges that specific callback into the real window's execution
+// context, unlike a plugin's ordinary script evaluation. Whatever the
+// exact native mechanism, it's proven to work, so this mirrors
+// steam-easygrid's pattern as closely as possible rather than
+// reinventing it: wait for the "SP Desktop_uid0" popup specifically,
+// then MainWindowBrowserManager.m_browser's "finished-request" event for
+// real navigation detection (instead of polling), reading
+// popup.m_popup.document for the *actual* page DOM (instead of a
+// heuristic "which window has the most content" guess).
+const DESKTOP_WINDOW_NAME = 'SP Desktop_uid0';
+const APP_PAGE_PATTERN = /^\/library\/app\/(\d+)/;
 const MANAGE_BUTTON_SELECTOR = '[aria-label="Manage"]';
 const CONTROLLER_BUTTON_SELECTOR = '[aria-label="Configure Controller"]';
 const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
-
-let loggedManageCandidates = false;
-
-/** One-shot, called the first time findContainer() runs against a
- * document with at least one [aria-label="Manage"] match -- dumps every
- * candidate's own rect and where (if anywhere) findRowAncestor() thinks
- * its row is, so any *further* wrong guess here is diagnosable in one
- * shot from the Logs panel instead of another screenshot-and-guess
- * round. */
-function logManageButtonCandidates(buttons: HTMLElement[]): void {
-	if (loggedManageCandidates || buttons.length === 0) {
-		return;
-	}
-	loggedManageCandidates = true;
-	const details = buttons.map((el, index) => {
-		const rect = el.getBoundingClientRect();
-		const row = findRowAncestor(el);
-		const rowDetail = row ? `rowRect=[x=${row.getBoundingClientRect().x},y=${row.getBoundingClientRect().y}],rowChildCount=${row.children.length}` : 'no-row-found';
-		return `[${index}] rect=[x=${rect.x},y=${rect.y},w=${rect.width},h=${rect.height}] offsetParent=${el.offsetParent !== null} ${rowDetail}`;
-	});
-	logInfo(`Manage button candidates: count=${buttons.length}, ${details.join('; ')}`);
-}
-
 const ROW_ANCESTOR_SEARCH_DEPTH = 5;
 
-/** Walks up from a Manage button looking for the ancestor that's
- * actually the shared icon row (i.e. also contains a "Configure
- * Controller" descendant), rather than assuming the row is the
- * *immediate* parent. The candidate diagnostic log showed
- * parentChildCount=1 for both Manage buttons on a real page -- Steam
- * wraps each icon in its own single-child focus/tooltip wrapper first,
- * so the immediate parent is never the row; the row is a few levels
- * further up. */
+interface MainWindowBrowserManagerLike {
+	m_lastLocation?: { pathname?: string };
+	m_browser?: { on: (event: string, callback: (currentUrl: unknown, previousUrl: unknown) => void) => void };
+}
+
+declare global {
+	// eslint-disable-next-line no-var -- ambient global, matches how Steam's own script actually declares it
+	var MainWindowBrowserManager: MainWindowBrowserManagerLike | undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** typeof never throws on an undeclared identifier, unlike accessing it
+ * directly -- the safe way to check for a bare global that may not exist
+ * yet (or ever, outside the specially-bridged callback context this is
+ * only ever called from). */
+function getMainWindowBrowserManager(): MainWindowBrowserManagerLike | null {
+	return typeof MainWindowBrowserManager !== 'undefined' && MainWindowBrowserManager ? MainWindowBrowserManager : null;
+}
+
+async function waitForMainWindowBrowserManager(maxAttempts = 100, delayMs = 100): Promise<MainWindowBrowserManagerLike | null> {
+	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		const mwbm = getMainWindowBrowserManager();
+		if (mwbm?.m_browser) {
+			return mwbm;
+		}
+		await sleep(delayMs);
+	}
+	return null;
+}
+
+/** Walks up from a "Manage" (gear icon) button looking for the ancestor
+ * that's actually the shared icon row (i.e. also contains a "Configure
+ * Controller" descendant) -- Steam wraps each icon in its own
+ * single-child focus/tooltip wrapper first, so the row is a few DOM
+ * levels above the button's immediate parent, not the parent itself
+ * (confirmed via a real-device candidate dump during earlier debugging).
+ * There can be more than one [aria-label="Manage"] element in the DOM at
+ * once (also confirmed via a real-device aria-label dump), so this is
+ * applied to every match and the one furthest down the page is
+ * preferred -- the real hero-banner icon row sits below any
+ * top-of-window chrome a duplicate might belong to. */
 function findRowAncestor(button: HTMLElement): HTMLElement | null {
 	let node: HTMLElement | null = button.parentElement;
 	for (let depth = 0; node && depth < ROW_ANCESTOR_SEARCH_DEPTH; depth++) {
@@ -95,273 +96,18 @@ function findRowAncestor(button: HTMLElement): HTMLElement | null {
 	return null;
 }
 
-/** The icon row Steam renders on the game-detail page (gear / controller
- * / info / heart). Anchors off the "Manage" (gear icon) button's stable
- * aria-label, falling back to the last-known hashed class if that ever
- * stops matching (e.g. a non-English Steam client, where aria-label text
- * is localized).
- *
- * There can be more than one [aria-label="Manage"] element in the DOM at
- * once -- confirmed via the user's own DevTools aria-label dump. Prior
- * fixes here failed for two different reasons: blindly taking the first
- * DOM match landed on a hidden/off-screen duplicate; requiring a
- * same-parent "Configure Controller" sibling filtered out *both* real
- * candidates, because it turns out neither Manage button's immediate
- * parent contains the other icons at all -- Steam wraps each icon in its
- * own single-child wrapper first (parentChildCount=1 for both, per the
- * candidate diagnostic log), so the real shared row is a few DOM levels
- * further up. findRowAncestor() walks up looking for that row instead of
- * assuming it's one specific fixed depth, and among whichever Manage
- * buttons actually resolve to a row this way, prefers the one furthest
- * down the page (the real hero-banner icon row sits below any
- * top-of-window chrome a duplicate might belong to). */
 function findContainer(doc: Document): HTMLElement | null {
 	const manageButtons = Array.from(doc.querySelectorAll<HTMLElement>(MANAGE_BUTTON_SELECTOR));
-	logManageButtonCandidates(manageButtons);
-
 	const rows = manageButtons
 		.map((button) => findRowAncestor(button))
 		.filter((row): row is HTMLElement => row !== null)
 		.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-
-	if (rows[0]) {
-		return rows[0];
-	}
-	return doc.querySelector<HTMLElement>(CONTAINER_SELECTOR_FALLBACK);
+	return rows[0] ?? null;
 }
 
-let observer: MutationObserver | null = null;
 let mountedRoot: Root | null = null;
 let mountedContainer: HTMLElement | null = null;
 let currentAppId: number | null = null;
-let loggedMissingAppId = false;
-
-function diagnoseSteamWindows(): void {
-	try {
-		const entries = Router.WindowStore?.SteamUIWindows ?? [];
-		const details = entries.map((entry, index) => {
-			const win = entry?.BrowserWindow;
-			let ariaCount: string;
-			try {
-				ariaCount = String(win?.document?.querySelectorAll('[aria-label]').length ?? 'no-document');
-			} catch (error) {
-				ariaCount = `threw: ${String(error)}`;
-			}
-			return `[${index}] name=${win?.name ?? 'unknown'} ariaLabelCount=${ariaCount}`;
-		});
-		logInfo(`Steam windows diagnostic: hasWindowStore=${Boolean(Router.WindowStore)}, count=${entries.length}, ${details.join('; ')}`);
-	} catch (error) {
-		logError('Steam windows diagnostic failed', error);
-	}
-}
-
-function diagnoseExecutionContext(): void {
-	const top = resolveRealWindow();
-	let topDocDetail = 'unreachable';
-	try {
-		topDocDetail = top?.document
-			? `rootId=${top.document.getElementById('root') ? 'found' : 'missing'}, manageButtonFound=${Boolean(top.document.querySelector(MANAGE_BUTTON_SELECTOR))}, fallbackClassFound=${Boolean(top.document.querySelector(CONTAINER_SELECTOR_FALLBACK))}, ariaLabelCount=${top.document.querySelectorAll('[aria-label]').length}`
-			: 'no document';
-	} catch (error) {
-		topDocDetail = `threw: ${String(error)}`;
-	}
-	logInfo(
-		`execution context diagnostic: isIframe=${window.top !== window}, ` +
-			`resolvedRealWindow=${top !== null}, resolvedDoc=[${topDocDetail}], ` +
-			`ownRootId=${document.getElementById('root') ? 'found' : 'missing'}, ` +
-			`ownAriaLabelCount=${document.querySelectorAll('[aria-label]').length}, ` +
-			`hasMainWindowBrowserManagerOnOwnWindow=${Boolean(window.MainWindowBrowserManager)}, ` +
-			`hasMainWindowBrowserManagerOnResolved=${Boolean(top?.MainWindowBrowserManager)}`,
-	);
-}
-
-/** @steambrew/client's routerHook doesn't rely on plain DOM queries at
- * all -- its constructor reflects into Steam's own webpack module
- * registry (findModuleByExport) and React fiber tree (getReactRoot) to
- * find real page internals, which is a fundamentally different mechanism
- * from document.querySelector. Since our own document has been shown to
- * be isolated from the real page (see diagnoseExecutionContext -- zero
- * aria-label elements where the real page has 15), this checks whether
- * that reflection-based approach reached across regardless, before
- * concluding routerHook is a dead end too. Reads routerHook's private
- * fields via bracket access -- TypeScript's `private` is compile-time
- * only, so this is legal at runtime and the only way to see in without
- * modifying the vendored library. */
-function diagnoseRouterHook(): void {
-	try {
-		const rh = routerHook as unknown as Record<string, unknown>;
-		const patchedModes = rh.patchedModes instanceof Set ? Array.from(rh.patchedModes as Set<number>) : String(rh.patchedModes);
-		const routes = rh.routes;
-		logInfo(
-			`routerHook diagnostic: hasRouteComponent=${Boolean(rh.Route)}, hasDesktopRouteComponent=${Boolean(rh.DesktopRoute)}, ` +
-				`patchedModes=${JSON.stringify(patchedModes)}, routesLength=${Array.isArray(routes) ? routes.length : String(routes)}`,
-		);
-	} catch (error) {
-		logError('routerHook diagnostic failed', error);
-	}
-}
-
-/** routerHook's constructor found real Route components (see
- * diagnoseRouterHook's log), so its reflection-based discovery does
- * reach across into the real page despite our own document being
- * isolated -- the missing piece is knowing the *exact* path string Steam
- * registers for the game-detail route, which routerHook.addPatch matches
- * by strict equality against route.props.path. Rather than keep
- * guessing, this monkey-patches the (Logger-inherited) debug() method
- * routerHook already calls with the real route list on every render
- * (`this.debug('Route list: ', routeList)` inside processList) and pulls
- * every route's real .props.path out of it -- legal at runtime since
- * TypeScript's `private`/inherited-method typing is compile-time only. */
-function sniffRoutePaths(): void {
-	try {
-		const rh = routerHook as unknown as { debug: (...args: unknown[]) => void };
-		if (typeof rh.debug !== 'function') {
-			logError('routerHook route-path sniffer: debug() not found on routerHook', new Error('no debug method'));
-			return;
-		}
-		const originalDebug = rh.debug.bind(rh);
-		const seen = new Set<string>();
-		rh.debug = (...args: unknown[]) => {
-			originalDebug(...args);
-			if (args[0] !== 'Route list: ' || !Array.isArray(args[1])) {
-				return;
-			}
-			const paths = (args[1] as Array<{ props?: { path?: string } }>)
-				.map((entry) => entry?.props?.path)
-				.filter((path): path is string => Boolean(path));
-			const key = paths.join(',');
-			if (paths.length > 0 && !seen.has(key)) {
-				seen.add(key);
-				logInfo(`routerHook route list paths: ${JSON.stringify(paths)}`);
-			}
-		};
-	} catch (error) {
-		logError('failed to install routerHook route-path sniffer', error);
-	}
-}
-
-const LIBRARY_APP_ROUTE = '/library/app/:appid';
-
-function extractAppIdFromRouteProps(props: RouteComponentProps<{ appid?: string }>): number | null {
-	const raw = props.match?.params?.appid;
-	if (!raw) {
-		return null;
-	}
-	const appid = Number(raw);
-	return Number.isFinite(appid) ? appid : null;
-}
-
-/** Wraps a matched route's own render output with our badge appended
- * alongside it. Rendered through routerHook, this executes as part of
- * the real page's own React tree (unlike everything else in this file),
- * so it's the one code path that can actually reach the visible page --
- * fixed-positioned since it isn't a DOM sibling of Steam's icon row the
- * way the (currently unreachable) DOM-injection code below assumes. */
-function withRouterHookBadge(render: (props: RouteComponentProps<{ appid?: string }>) => ReactNode) {
-	return (props: RouteComponentProps<{ appid?: string }>): ReactNode => {
-		let original: ReactNode;
-		try {
-			original = render(props);
-		} catch (error) {
-			logError('routerHook-patched library-app route render threw', error);
-			original = null;
-		}
-
-		const appid = extractAppIdFromRouteProps(props);
-		if (appid === null) {
-			return original;
-		}
-
-		return (
-			<>
-				{original}
-				<div style={{ position: 'fixed', top: '80px', right: '24px', zIndex: 1000 }}>
-					<ErrorBoundary>
-						<GameTagBadge appid={appid} />
-					</ErrorBoundary>
-				</div>
-			</>
-		);
-	};
-}
-
-function installRouterHookPatch(): void {
-	try {
-		routerHook.addPatch(LIBRARY_APP_ROUTE, (route: RouteProps) => {
-			logInfo(`routerHook patch callback fired for registered path=${LIBRARY_APP_ROUTE}, route.path=${String(route.path)}`);
-			try {
-				if (typeof route.render === 'function') {
-					route.render = withRouterHookBadge(route.render as (props: RouteComponentProps<{ appid?: string }>) => ReactNode);
-				} else if (route.component) {
-					const Component = route.component;
-					route.render = withRouterHookBadge((props) => <Component {...props} />);
-					delete route.component;
-				} else {
-					logInfo('routerHook patch fired but route has neither render nor component');
-				}
-			} catch (error) {
-				logError('failed to patch library-app route props via routerHook', error);
-			}
-			return route;
-		});
-		logInfo(`routerHook.addPatch registered for ${LIBRARY_APP_ROUTE}`);
-	} catch (error) {
-		logError('routerHook.addPatch registration failed', error);
-	}
-}
-
-function appIdFromLocation(): number | null {
-	const pathname = resolveRealWindow()?.MainWindowBrowserManager?.m_lastLocation?.pathname;
-	if (!pathname) {
-		return null;
-	}
-	const match = pathname.match(APP_ID_PATTERN);
-	return match ? Number(match[1]) : null;
-}
-
-let loggedHeaderImageCandidates = false;
-
-/** Steam serves a *lot* of images embedding the same
- * store_item_assets/steam/apps/{appid}/... URL shape on a single library
- * page, not just the current game's own hero banner -- recommendation
- * rails, "Community Content" thumbnails, and DLC/"Additional Content"
- * tiles for entirely different games all matched the same pattern.
- * Real-device logs showed the resolved appid changing between different
- * wrong values on every single mutation event while parked on one game's
- * page (35140, 4791830, 3986520, ...), confirming this was picking
- * essentially whichever matching <img> happened to be first in DOM
- * order, not anything scoped to "the game this page is actually about."
- *
- * The one thing that reliably sets the real hero banner apart from
- * every other matching image on the page is size -- it's far larger
- * (spans most of the viewport width) than any thumbnail or rail image,
- * so this picks whichever match has the largest rendered area instead
- * of the first one found. */
-function appIdFromHeaderImage(doc: Document): number | null {
-	const candidates: { appid: number; area: number }[] = [];
-	for (const img of Array.from(doc.querySelectorAll('img'))) {
-		const src = img.currentSrc || img.src;
-		const match = src.match(HEADER_IMAGE_APP_ID_PATTERN);
-		if (!match) {
-			continue;
-		}
-		const rect = img.getBoundingClientRect();
-		candidates.push({ appid: Number(match[1]), area: rect.width * rect.height });
-	}
-
-	if (!loggedHeaderImageCandidates && candidates.length > 0) {
-		loggedHeaderImageCandidates = true;
-		logInfo(`header image candidates: ${candidates.map((c) => `appid=${c.appid} area=${Math.round(c.area)}`).join('; ')}`);
-	}
-
-	let best: { appid: number; area: number } | null = null;
-	for (const candidate of candidates) {
-		if (!best || candidate.area > best.area) {
-			best = candidate;
-		}
-	}
-	return best ? best.appid : null;
-}
 
 function unmount(): void {
 	mountedRoot?.unmount();
@@ -371,44 +117,34 @@ function unmount(): void {
 	currentAppId = null;
 }
 
-function handleMutation(): void {
-	const topDoc = resolveRealWindow()?.document;
-	if (!topDoc) {
-		return;
-	}
-
-	const container = findContainer(topDoc);
-	if (!container) {
-		if (currentAppId !== null) {
-			unmount();
-		}
-		loggedMissingAppId = false;
-		return;
-	}
-
-	const appid = appIdFromLocation() ?? appIdFromHeaderImage(topDoc);
-	if (appid === null) {
-		if (!loggedMissingAppId) {
-			loggedMissingAppId = true;
-			logInfo('game-detail container found but could not resolve an appid from location or header image');
-		}
-		return;
-	}
-
+async function mountForAppId(doc: Document, appid: number): Promise<void> {
 	if (appid === currentAppId && mountedContainer?.isConnected) {
+		return;
+	}
+
+	// The icon row might not exist in the DOM the instant navigation
+	// completes -- Millennium.findElement (a purpose-built API for
+	// exactly this, used the same way by steam-easygrid) polls for it
+	// instead of guessing a fixed delay.
+	try {
+		await Millennium.findElement(doc, MANAGE_BUTTON_SELECTOR, 8000);
+	} catch (error) {
+		logError(`Millennium.findElement(${MANAGE_BUTTON_SELECTOR}) failed for appid=${appid}`, error);
+	}
+
+	const container = findContainer(doc);
+	if (!container) {
+		logInfo(`game page for appid=${appid} detected but icon row container never appeared`);
 		return;
 	}
 
 	unmount();
 	currentAppId = appid;
-	loggedMissingAppId = false;
-	const containerRect = container.getBoundingClientRect();
-	logInfo(`mounting game badge for appid=${appid}, containerRect=[x=${containerRect.x}, y=${containerRect.y}, w=${containerRect.width}, h=${containerRect.height}]`);
+	logInfo(`mounting game badge for appid=${appid}`);
 
 	try {
-		const root = topDoc.createElement('div');
+		const root = doc.createElement('div');
 		root.id = ROOT_ELEMENT_ID;
-		container.style.position = 'relative';
 		container.appendChild(root);
 		mountedContainer = root;
 		mountedRoot = createRoot(root);
@@ -418,66 +154,71 @@ function handleMutation(): void {
 	}
 }
 
-let installed = false;
-let observedDocument: Document | null = null;
-
-/** The very first diagnostic run confirmed the whole premise here is
- * timing-sensitive: Router.WindowStore.SteamUIWindows had exactly one
- * entry named "SP DesktopLoginWindow_uid0" (the login window, with zero
- * aria-label elements) -- because this plugin's frontend loads early in
- * Steam's startup sequence, before the real desktop library window has
- * necessarily registered itself. A MutationObserver attached once, at
- * that moment, to whatever document resolveRealWindow() happened to
- * return would keep watching that wrong (or eventually detached) body
- * forever, even though calling resolveRealWindow() again *later* would
- * find the real window once it exists.
- *
- * Re-resolves and re-attaches (tearing down the old observer) whenever
- * the resolved document changes, and also directly re-runs
- * handleMutation() on the same interval as a safety net -- Millennium
- * doesn't expose a "the real window is now ready" event to wait for
- * instead, so polling is the pragmatic option here. */
-function ensureObserverAttached(): void {
-	const doc = resolveRealWindow()?.document;
-	if (!doc || doc === observedDocument) {
+async function handleNavigation(doc: Document, pathname: string | undefined): Promise<void> {
+	const match = pathname?.match(APP_PAGE_PATTERN);
+	if (!match) {
+		if (currentAppId !== null) {
+			unmount();
+		}
 		return;
 	}
-
-	observer?.disconnect();
-	observedDocument = doc;
-	try {
-		observer = new MutationObserver(handleMutation);
-		observer.observe(doc.body, { childList: true, subtree: true });
-		logInfo(`game-detail page observer (re)attached, resolved doc ariaLabelCount=${doc.querySelectorAll('[aria-label]').length}`);
-	} catch (error) {
-		logError('failed to (re)attach game-detail page observer', error);
-	}
+	await mountForAppId(doc, Number(match[1]));
 }
 
-const POLL_INTERVAL_MS = 2000;
+interface DesktopPopup {
+	m_strName?: string;
+	m_popup?: { document?: Document };
+}
 
-/** Watches the real Steam desktop window's DOM for the game-detail page
- * and mounts GameTagBadge directly into it. Idempotent -- calling this
- * more than once (e.g. a plugin reload) is a no-op after the first.
- * Gamepad/Big Picture mode isn't handled yet -- this silently no-ops in
- * that mode rather than throwing, same as it does on any other
- * non-game-detail page. */
-export function patchLibraryApp(): void {
-	if (installed) {
+let installed = false;
+
+async function onPopupCreation(popup: DesktopPopup): Promise<void> {
+	if (popup?.m_strName !== DESKTOP_WINDOW_NAME || installed) {
 		return;
 	}
 	installed = true;
 
-	diagnoseSteamWindows();
-	diagnoseExecutionContext();
-	diagnoseRouterHook();
-	sniffRoutePaths();
-	installRouterHookPatch();
+	logInfo(`desktop popup window created (${DESKTOP_WINDOW_NAME}), waiting for MainWindowBrowserManager`);
 
-	ensureObserverAttached();
-	handleMutation();
-	setInterval(() => {
-		ensureObserverAttached();
-		handleMutation();
-	}, POLL_INTERVAL_MS);
+	const mwbm = await waitForMainWindowBrowserManager();
+	if (!mwbm?.m_browser) {
+		logError('MainWindowBrowserManager never became available on the desktop popup', new Error('timed out waiting for MainWindowBrowserManager'));
+		return;
+	}
+
+	const doc = popup.m_popup?.document;
+	if (!doc) {
+		logError('desktop popup has no m_popup.document', new Error('no document on popup.m_popup'));
+		return;
+	}
+
+	logInfo('MainWindowBrowserManager ready, registering finished-request listener');
+	mwbm.m_browser.on('finished-request', () => {
+		void handleNavigation(doc, mwbm.m_lastLocation?.pathname);
+	});
+
+	// Covers the plugin loading *after* the user has already navigated to
+	// a game page, where no fresh navigation event will fire.
+	void handleNavigation(doc, mwbm.m_lastLocation?.pathname);
+}
+
+/** Registers a Millennium.AddWindowCreateHook callback that waits for
+ * Steam's real desktop window ("SP Desktop_uid0"), then mounts
+ * GameTagBadge directly into its game-detail page's icon row whenever
+ * real navigation (MainWindowBrowserManager.m_browser's
+ * "finished-request" event) lands on one. See the file-level comment for
+ * why this specific mechanism, not DOM polling or routerHook, is what
+ * actually reaches the real page. Idempotent -- calling this more than
+ * once is a no-op after the first successful registration. Gamepad/Big
+ * Picture mode isn't handled yet -- "SP Desktop_uid0" is desktop-only,
+ * so this silently no-ops there rather than throwing. */
+export function patchLibraryApp(): void {
+	try {
+		Millennium.AddWindowCreateHook?.((context) => {
+			void onPopupCreation(context as DesktopPopup);
+		});
+		logInfo('AddWindowCreateHook registered');
+	} catch (error) {
+		logError('failed to register AddWindowCreateHook', error);
+	}
 }
