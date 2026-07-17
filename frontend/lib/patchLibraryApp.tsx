@@ -31,15 +31,25 @@ import { logError, logInfo } from './log';
 // steam-easygrid's pattern as closely as possible rather than
 // reinventing it: wait for the "SP Desktop_uid0" popup specifically,
 // then MainWindowBrowserManager.m_browser's "finished-request" event for
-// real navigation detection (instead of polling), reading
-// popup.m_popup.document for the *actual* page DOM (instead of a
-// heuristic "which window has the most content" guess).
+// real navigation detection, reading popup.m_popup.document for the
+// *actual* page DOM (instead of a heuristic "which window has the most
+// content" guess).
+//
+// One thing that DIDN'T carry over cleanly: on a real device,
+// "finished-request" fired once (at listener registration) and never
+// again while browsing between library pages. It's a CEF network-level
+// event, and Steam's library is a single-page app -- in-app navigation
+// is a client-side React Router state change, not necessarily a new
+// network request. Rather than trust the event alone, a cheap
+// m_lastLocation.pathname poll runs alongside it as a safety net (see
+// onPopupCreation).
 const DESKTOP_WINDOW_NAME = 'SP Desktop_uid0';
 const APP_PAGE_PATTERN = /^\/library\/app\/(\d+)/;
 const MANAGE_BUTTON_SELECTOR = '[aria-label="Manage"]';
 const CONTROLLER_BUTTON_SELECTOR = '[aria-label="Configure Controller"]';
 const ROOT_ELEMENT_ID = 'library-tracker-game-badge';
 const ROW_ANCESTOR_SEARCH_DEPTH = 5;
+const POLL_INTERVAL_MS = 1500;
 
 interface MainWindowBrowserManagerLike {
 	m_lastLocation?: { pathname?: string };
@@ -154,7 +164,14 @@ async function mountForAppId(doc: Document, appid: number): Promise<void> {
 	}
 }
 
+let loggedPathname: string | undefined;
+
 async function handleNavigation(doc: Document, pathname: string | undefined): Promise<void> {
+	if (pathname !== loggedPathname) {
+		loggedPathname = pathname;
+		logInfo(`navigation check: pathname=${String(pathname)}`);
+	}
+
 	const match = pathname?.match(APP_PAGE_PATTERN);
 	if (!match) {
 		if (currentAppId !== null) {
@@ -196,6 +213,20 @@ async function onPopupCreation(popup: DesktopPopup): Promise<void> {
 	mwbm.m_browser.on('finished-request', () => {
 		void handleNavigation(doc, mwbm.m_lastLocation?.pathname);
 	});
+
+	// "finished-request" fired once on registration but never again while
+	// the user browsed between library pages on a real device -- it's a
+	// CEF network-level event ("a resource load finished"), and Steam's
+	// library is a single-page app where in-app navigation is a client-
+	// side React Router state change, not necessarily a new network
+	// request. Rather than trust the event alone, this also polls
+	// m_lastLocation.pathname directly -- cheap (a plain property read,
+	// no DOM/native call) and catches any navigation the event misses.
+	// handleNavigation() itself is a no-op when the appid hasn't changed,
+	// so polling doesn't cause repeated remounts.
+	setInterval(() => {
+		void handleNavigation(doc, mwbm.m_lastLocation?.pathname);
+	}, POLL_INTERVAL_MS);
 
 	// Covers the plugin loading *after* the user has already navigated to
 	// a game page, where no fresh navigation event will fire.
