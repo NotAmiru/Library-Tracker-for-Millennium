@@ -1,3 +1,6 @@
+import { logError } from './log';
+import { resolveRealWindow } from './steamWindow';
+
 export interface GameSnapshot {
 	appid: number;
 	gameName: string;
@@ -14,9 +17,22 @@ export interface GameSnapshot {
  * with no backend round-trip. These are the same internals Decky-era
  * plugins relied on; SteamAppOverview and GetMyAchievementsForApp are
  * both part of Millennium's typed SDK.
+ *
+ * window.appStore is a plain JS singleton Steam's own webpack app bundle
+ * creates -- unlike SteamClient (a native binding Millennium exposes
+ * uniformly everywhere), it only exists within the real page's own
+ * script realm. This plugin's script runs in an isolated realm (see
+ * steamWindow.ts), so the bare `window.appStore` global is undefined
+ * here; goes through resolveRealWindow() instead, same as every DOM
+ * lookup in patchLibraryApp.tsx.
  */
 export async function readGameSnapshot(appid: number): Promise<GameSnapshot> {
-	const overview = window.appStore.GetAppOverviewByAppID(appid);
+	const realWindow = resolveRealWindow();
+	if (!realWindow?.appStore) {
+		logError(`readGameSnapshot(${appid}): appStore unreachable on resolved window`, new Error('no appStore'));
+		return { appid, gameName: `Unknown Game (${appid})`, playtimeMinutes: 0, rtLastTimePlayed: null, totalAchievements: 0, unlockedAchievements: 0 };
+	}
+	const overview = realWindow.appStore.GetAppOverviewByAppID(appid);
 
 	const gameName = overview?.display_name ?? `Unknown Game (${appid})`;
 	const playtimeMinutes = overview?.minutes_playtime_forever ?? 0;

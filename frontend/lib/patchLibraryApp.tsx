@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import type { RouteComponentProps, RouteProps } from 'react-router';
 import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
+import { resolveRealWindow } from './steamWindow';
 
 // Two earlier approaches here both silently failed on a real desktop
 // Millennium install: routerHook.addPatch('/library/app/:appid', ...)
@@ -129,75 +130,11 @@ function findContainer(doc: Document): HTMLElement | null {
 	return doc.querySelector<HTMLElement>(CONTAINER_SELECTOR_FALLBACK);
 }
 
-declare global {
-	interface Window {
-		MainWindowBrowserManager?: {
-			m_lastLocation?: { pathname?: string };
-		};
-	}
-}
-
 let observer: MutationObserver | null = null;
 let mountedRoot: Root | null = null;
 let mountedContainer: HTMLElement | null = null;
 let currentAppId: number | null = null;
 let loggedMissingAppId = false;
-
-/** window.top turned out to be a dead end -- confirmed via the user's own
- * DevTools (a screen recording comparing document.querySelectorAll('[aria-
- * label]') between our plugin's own console and the real page's: 0 vs 15)
- * that this plugin's script runs in a genuinely separate, isolated
- * top-level browsing context with no parent/child DOM relationship to the
- * real page at all, so window.top just resolves back to itself.
- *
- * @steambrew/client's `Router` module (Router.ts) is reflected via the
- * same webpack-module-search mechanism that routerHook's constructor uses
- * successfully (confirmed: hasRouteComponent/hasDesktopRouteComponent
- * both true), and it exposes Router.WindowStore.SteamUIWindows -- an
- * array Steam itself maintains of every real UI window, each carrying an
- * actual `BrowserWindow: Window` reference. That's a real object
- * reference handed to us by Steam's own reflected internals, not
- * something we have to reach for via window.top/opener, so same-origin
- * restrictions that blocked window.top shouldn't apply here.
- *
- * Since we don't know in advance which entry is the real desktop library
- * window (name strings aren't confirmed stable), this picks whichever
- * window's document has the most [aria-label] elements -- a cheap proxy
- * for "this is the real, content-rich page" that doesn't depend on
- * guessing a specific window name. */
-function resolveRealWindow(): Window | null {
-	try {
-		const entries = Router.WindowStore?.SteamUIWindows ?? [];
-		let best: Window | null = null;
-		let bestScore = -1;
-		for (const entry of entries) {
-			const candidate = entry?.BrowserWindow;
-			if (!candidate) {
-				continue;
-			}
-			let score = -1;
-			try {
-				score = candidate.document?.querySelectorAll('[aria-label]').length ?? -1;
-			} catch {
-				score = -1;
-			}
-			if (score > bestScore) {
-				bestScore = score;
-				best = candidate;
-			}
-		}
-		if (best && bestScore > 0) {
-			return best;
-		}
-	} catch {
-		// fall through to the legacy window.top guess below
-	}
-	try {
-		return window.top && window.top !== window ? window.top : window;
-	} catch {
-		return null;
-	}
-}
 
 function diagnoseSteamWindows(): void {
 	try {
