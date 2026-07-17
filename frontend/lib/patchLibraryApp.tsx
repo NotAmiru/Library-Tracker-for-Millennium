@@ -389,12 +389,48 @@ function handleMutation(): void {
 }
 
 let installed = false;
+let observedDocument: Document | null = null;
 
-/** Watches the real top-level Steam window's DOM for the desktop
- * game-detail page and mounts GameTagBadge directly into it. Idempotent
- * -- calling this more than once (e.g. a plugin reload) is a no-op after
- * the first. Gamepad/Big Picture mode isn't handled yet -- this silently
- * no-ops in that mode rather than throwing, same as it does on any other
+/** The very first diagnostic run confirmed the whole premise here is
+ * timing-sensitive: Router.WindowStore.SteamUIWindows had exactly one
+ * entry named "SP DesktopLoginWindow_uid0" (the login window, with zero
+ * aria-label elements) -- because this plugin's frontend loads early in
+ * Steam's startup sequence, before the real desktop library window has
+ * necessarily registered itself. A MutationObserver attached once, at
+ * that moment, to whatever document resolveRealWindow() happened to
+ * return would keep watching that wrong (or eventually detached) body
+ * forever, even though calling resolveRealWindow() again *later* would
+ * find the real window once it exists.
+ *
+ * Re-resolves and re-attaches (tearing down the old observer) whenever
+ * the resolved document changes, and also directly re-runs
+ * handleMutation() on the same interval as a safety net -- Millennium
+ * doesn't expose a "the real window is now ready" event to wait for
+ * instead, so polling is the pragmatic option here. */
+function ensureObserverAttached(): void {
+	const doc = resolveRealWindow()?.document;
+	if (!doc || doc === observedDocument) {
+		return;
+	}
+
+	observer?.disconnect();
+	observedDocument = doc;
+	try {
+		observer = new MutationObserver(handleMutation);
+		observer.observe(doc.body, { childList: true, subtree: true });
+		logInfo(`game-detail page observer (re)attached, resolved doc ariaLabelCount=${doc.querySelectorAll('[aria-label]').length}`);
+	} catch (error) {
+		logError('failed to (re)attach game-detail page observer', error);
+	}
+}
+
+const POLL_INTERVAL_MS = 2000;
+
+/** Watches the real Steam desktop window's DOM for the game-detail page
+ * and mounts GameTagBadge directly into it. Idempotent -- calling this
+ * more than once (e.g. a plugin reload) is a no-op after the first.
+ * Gamepad/Big Picture mode isn't handled yet -- this silently no-ops in
+ * that mode rather than throwing, same as it does on any other
  * non-game-detail page. */
 export function patchLibraryApp(): void {
 	if (installed) {
@@ -408,17 +444,10 @@ export function patchLibraryApp(): void {
 	sniffRoutePaths();
 	installRouterHookPatch();
 
-	try {
-		const topDoc = resolveRealWindow()?.document;
-		if (!topDoc) {
-			logError('cannot install game-detail page observer: top window/document unreachable', new Error('no top document'));
-			return;
-		}
-		observer = new MutationObserver(handleMutation);
-		observer.observe(topDoc.body, { childList: true, subtree: true });
-		logInfo('game-detail page observer installed against top document');
+	ensureObserverAttached();
+	handleMutation();
+	setInterval(() => {
+		ensureObserverAttached();
 		handleMutation();
-	} catch (error) {
-		logError('failed to install game-detail page observer', error);
-	}
+	}, POLL_INTERVAL_MS);
 }
