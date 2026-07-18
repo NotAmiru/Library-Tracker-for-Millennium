@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import type { JSX } from 'react';
 import { useGameTag } from '../hooks/useGameTag';
 import { GameTag } from './GameTag';
-import { openTagManagerModal } from './TagManager';
+import { TagManager } from './TagManager';
 
 interface GameTagBadgeProps {
 	appid: number;
@@ -12,25 +13,25 @@ interface GameTagBadgeProps {
  * lib/patchLibraryApp.tsx (a real DOM node, not a React-Router-rendered
  * child), so it renders inline alongside the native icons rather than as
  * an absolutely-positioned overlay. Syncs `appid` on mount, then renders
- * its current tag (or an "add tag" placeholder); clicking either opens the
- * tag/stats dialog through Steam's own modal system (see
- * openTagManagerModal in TagManager.tsx) rather than an in-tree overlay. */
+ * its current tag (or an "add tag" placeholder), opening TagManager for
+ * manual overrides on click. TagManager portals its own overlay to
+ * `windowRef.document.body` rather than rendering inline here -- see its
+ * file comment for why. */
 export function GameTagBadge({ appid, windowRef }: GameTagBadgeProps): JSX.Element | null {
 	const { record, loading } = useGameTag(appid);
+	const [managerOpen, setManagerOpen] = useState(false);
 
 	if (loading) {
 		return null;
 	}
 
-	const openModal = () => openTagManagerModal(appid, windowRef, record?.game_name ?? 'Game');
-
 	return (
 		<div style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}>
 			{record?.tag ? (
-				<GameTag tag={record.tag} isManual={record.is_manual} onClick={openModal} />
+				<GameTag tag={record.tag} isManual={record.is_manual} onClick={() => setManagerOpen(true)} />
 			) : (
 				<div
-					onClick={openModal}
+					onClick={() => setManagerOpen(true)}
 					style={{
 						display: 'inline-flex',
 						alignItems: 'center',
@@ -55,6 +56,7 @@ export function GameTagBadge({ appid, windowRef }: GameTagBadgeProps): JSX.Eleme
 					<span>ADD TAG</span>
 				</div>
 			)}
+			{managerOpen && <TagManager appid={appid} windowRef={windowRef} onClose={() => setManagerOpen(false)} />}
 		</div>
 	);
 }

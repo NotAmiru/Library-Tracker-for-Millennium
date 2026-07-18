@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { JSX } from 'react';
-import { DialogButton, Focusable, ModalRoot, showModal } from '@steambrew/client';
+import { createPortal } from 'react-dom';
+import type { JSX, MouseEvent } from 'react';
+import { DialogButton, Focusable } from '@steambrew/client';
 import { FaCheck } from 'react-icons/fa';
 import { useGameTag } from '../hooks/useGameTag';
 import { TAG_COLORS, TAG_LABELS } from './TagIcon';
@@ -8,12 +9,17 @@ import { getHltbData } from '../lib/hltb';
 import { logError } from '../lib/log';
 import type { HltbData, TagName } from '../types';
 
-interface TagManagerContentProps {
+interface TagManagerProps {
 	appid: number;
+	windowRef: Window;
 	onClose: () => void;
 }
 
 const ALL_TAGS: TagName[] = ['mastered', 'completed', 'in_progress', 'dropped'];
+
+function stopPropagation(event: MouseEvent): void {
+	event.stopPropagation();
+}
 
 function formatPlaytime(minutes: number): string {
 	const hours = Math.floor(minutes / 60);
@@ -56,12 +62,24 @@ function SectionHeader({ children }: { children: string }): JSX.Element {
 	);
 }
 
-/** The dialog's actual content, rendered inside Steam's own ModalRoot (via
- * showModal below) rather than our own DOM tree -- see openTagManagerModal
- * for why. Self-contained: subscribes to useGameTag itself instead of
- * receiving state as props, since showModal's tree is detached from
- * GameTagBadge's, so props passed in at call time can't stay live. */
-function TagManagerContent({ appid, onClose }: TagManagerContentProps): JSX.Element {
+/** Renders the tag/stats dialog by portaling straight into
+ * `windowRef.document.body` instead of as a normal in-tree child of
+ * GameTagBadge. The overlay itself (`position: fixed; inset: 0`) is
+ * unchanged from what already rendered correctly once nested inline --
+ * the actual bug was where it was nested: GameTagBadge's mount point is
+ * inside Steam's hero-banner icon row, and that banner sets a CSS
+ * `transform` for its parallax effect. Per spec, a `transform`d ancestor
+ * becomes the containing block for any `position: fixed` descendant, so
+ * the overlay was getting clipped to that banner's thin icon-row box
+ * instead of the viewport -- a small dark sliver with no room to show the
+ * card, i.e. exactly the "black box" symptom. Portaling to `document.body`
+ * (the top of the tree, outside any such ancestor) sidesteps that
+ * entirely. This intentionally avoids Steam's own showModal/ModalRoot --
+ * that path depends on Millennium's webpack-string-matching finding
+ * Steam's internal modal component, which can silently resolve to
+ * `undefined` on a given Steam build and produce the exact same-looking
+ * empty box for a different reason. */
+export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.Element | null {
 	const { record, setTag, remove, resetToAuto } = useGameTag(appid);
 	const [hltb, setHltb] = useState<HltbData | null>(null);
 
@@ -79,12 +97,41 @@ function TagManagerContent({ appid, onClose }: TagManagerContentProps): JSX.Elem
 		};
 	}, [appid]);
 
+	const portalTarget = windowRef?.document?.body;
+	if (!portalTarget) {
+		logError('TagManager: windowRef.document.body unavailable, cannot open dialog', new Error('missing portal target'));
+		return null;
+	}
+
 	const activeTag = record?.tag ?? null;
 	const statusColor = activeTag ? TAG_COLORS[activeTag] : '#8f98a0';
 
-	return (
-		<ModalRoot closeModal={onClose} onCancel={onClose}>
-			<Focusable flow-children="down" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+	return createPortal(
+		<div
+			style={{
+				position: 'fixed',
+				inset: 0,
+				background: 'rgba(0, 0, 0, 0.6)',
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				zIndex: 1000,
+			}}
+			onClick={onClose}
+		>
+			<Focusable
+				flow-children="down"
+				onClick={stopPropagation}
+				style={{
+					background: '#1b2838',
+					borderRadius: '8px',
+					padding: '20px',
+					width: '360px',
+					display: 'flex',
+					flexDirection: 'column',
+					gap: '14px',
+				}}
+			>
 				<div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
 					<div style={{ fontSize: '17px', fontWeight: 700, color: '#fff' }}>{record?.game_name ?? 'Game'}</div>
 					{activeTag && (
@@ -164,27 +211,7 @@ function TagManagerContent({ appid, onClose }: TagManagerContentProps): JSX.Elem
 					Close
 				</DialogButton>
 			</Focusable>
-		</ModalRoot>
+		</div>,
+		portalTarget,
 	);
-}
-
-/** Opens the tag/stats dialog via Steam's own modal system (the same
- * showModal/ModalRoot pair steam-easygrid uses successfully) instead of a
- * homemade `position: fixed` overlay rendered inside the page's own DOM.
- * That homemade overlay broke in practice: `position: fixed` is scoped to
- * the nearest ancestor with a `transform` (not necessarily the viewport --
- * see MDN's "containing block" rules), and Steam's hero-banner ancestor
- * of the icon row sets one for its parallax effect, so the overlay ended
- * up clipped to that banner's thin icon-row box instead of covering the
- * screen -- just a small dark rectangle with no room to show the card.
- * showModal renders into Steam's own top-level modal layer instead,
- * sidestepping the whole ancestor chain. */
-export function openTagManagerModal(appid: number, windowRef: Window, gameName: string): void {
-	const holder: { close?: () => void } = {};
-	const onClose = () => holder.close?.();
-	const result = showModal(<TagManagerContent appid={appid} onClose={onClose} />, windowRef, {
-		strTitle: gameName,
-		bHideMainWindowForPopouts: false,
-	});
-	holder.close = result.Close;
 }
