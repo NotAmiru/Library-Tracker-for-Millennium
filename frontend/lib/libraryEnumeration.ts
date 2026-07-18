@@ -1,4 +1,68 @@
+import { EAppType } from '@steambrew/client';
 import type { SteamAppOverview } from '@steambrew/client';
+import { logInfo } from './log';
+
+interface CandidateWindow {
+	SteamClient?: { Apps?: { GetAllApps?: () => SteamAppOverview[] } };
+	collectionStore?: {
+		allAppsCollection?: { allApps?: SteamAppOverview[] };
+		allGamesCollection?: { allApps?: SteamAppOverview[] };
+	};
+	appStore?: { allApps?: SteamAppOverview[]; m_mapApps?: Map<number, SteamAppOverview> };
+}
+
+let loggedSources = false;
+
+/**
+ * Tries the same set of undocumented candidates as before, in the same
+ * order, but now logs the size of *every* candidate (not just whichever
+ * one wins) the first time this runs -- SteamClient.Apps.GetAllApps()
+ * was assumed to be the one powering successful enumeration (steamData.ts
+ * was built entirely around it), but a real-device full-library sync
+ * came back with every single readGameSnapshot() lookup through that API
+ * failing, including for appid 730 (Counter-Strike 2, definitely owned).
+ * Since enumeration itself was working (it found real appids, just no
+ * names), the working source has to be one of the *other* four
+ * candidates -- this diagnostic settles which one directly instead of
+ * guessing again.
+ */
+function resolveAppOverviews(): { overviews: SteamAppOverview[]; source: string } {
+	const w = window as unknown as CandidateWindow;
+
+	const fromSteamClient = w.SteamClient?.Apps?.GetAllApps?.();
+	const fromCollectionAll = w.collectionStore?.allAppsCollection?.allApps;
+	const fromCollectionGames = w.collectionStore?.allGamesCollection?.allApps;
+	const fromAppStoreAll = w.appStore?.allApps;
+	const fromAppStoreMap = w.appStore?.m_mapApps;
+
+	if (!loggedSources) {
+		loggedSources = true;
+		logInfo(
+			`app overview source diagnostic: SteamClient.Apps.GetAllApps=${fromSteamClient?.length ?? 'unavailable'}, ` +
+				`collectionStore.allAppsCollection=${fromCollectionAll?.length ?? 'unavailable'}, ` +
+				`collectionStore.allGamesCollection=${fromCollectionGames?.length ?? 'unavailable'}, ` +
+				`appStore.allApps=${fromAppStoreAll?.length ?? 'unavailable'}, ` +
+				`appStore.m_mapApps=${fromAppStoreMap?.size ?? 'unavailable'}`,
+		);
+	}
+
+	if (fromSteamClient && fromSteamClient.length > 0) {
+		return { overviews: fromSteamClient, source: 'SteamClient.Apps.GetAllApps' };
+	}
+	if (fromCollectionAll && fromCollectionAll.length > 0) {
+		return { overviews: fromCollectionAll, source: 'collectionStore.allAppsCollection' };
+	}
+	if (fromCollectionGames && fromCollectionGames.length > 0) {
+		return { overviews: fromCollectionGames, source: 'collectionStore.allGamesCollection' };
+	}
+	if (fromAppStoreAll && fromAppStoreAll.length > 0) {
+		return { overviews: fromAppStoreAll, source: 'appStore.allApps' };
+	}
+	if (fromAppStoreMap && fromAppStoreMap.size > 0) {
+		return { overviews: Array.from(fromAppStoreMap.values()), source: 'appStore.m_mapApps' };
+	}
+	return { overviews: [], source: 'none' };
+}
 
 /**
  * Best-effort enumeration of every appid the current user owns (installed
@@ -9,55 +73,78 @@ import type { SteamAppOverview } from '@steambrew/client';
  * fallback chain is confirmed via source reading of published Millennium
  * reference plugins (SteamHunter-plugin, hltb-millennium-plugin), which
  * rely on the same set of candidates because no single one is reliably
- * present across every Steam client version / UI mode. Local `as`
- * casts are used instead of augmenting the global Window type, since the
- * SDK's own ambient `appStore` declaration can't be safely merged with
- * additional untyped properties.
+ * present across every Steam client version / UI mode.
  */
 export function getAllOwnedAppIds(): number[] {
-	const w = window as unknown as {
-		SteamClient?: { Apps?: { GetAllApps?: () => SteamAppOverview[] } };
-		collectionStore?: {
-			allAppsCollection?: { allApps?: SteamAppOverview[] };
-			allGamesCollection?: { allApps?: SteamAppOverview[] };
-		};
-		appStore?: { allApps?: SteamAppOverview[]; m_mapApps?: Map<number, SteamAppOverview> };
-	};
+	return dedupeAppIds(resolveAppOverviews().overviews);
+}
 
-	const fromSteamClient = w.SteamClient?.Apps?.GetAllApps?.();
-	if (fromSteamClient && fromSteamClient.length > 0) {
-		return dedupeAppIds(fromSteamClient);
+// Real Steam appids are sequential-ish and, as of 2026, nowhere near this
+// high -- comfortably generous headroom for real future growth. Added
+// after a real-device sync log showed entries like 2404564240, 3529522633,
+// and 2793264736 mixed in with real appids: multi-billion-range garbage
+// from one of the fallback enumeration sources (likely a non-game
+// collection entry or similar, not an actual owned app), coinciding with
+// two Millennium native-host crashes (EXCEPTION_ACCESS_VIOLATION at the
+// identical instruction address both times -- a deterministic bug, not a
+// timing issue) during a full-library sync. Filtering these out before
+// they ever reach a backend RPC call is a defensive measure on our end
+// regardless of whatever exactly Millennium's native code does with an
+// out-of-range value.
+const MAX_PLAUSIBLE_APP_ID = 10_000_000;
+
+function isPlausibleAppId(appid: number): boolean {
+	return Number.isInteger(appid) && appid > 0 && appid <= MAX_PLAUSIBLE_APP_ID;
+}
+
+// Only actual games (and non-Steam game shortcuts, which are real games
+// the user added manually) get tracked -- soundtracks, SDKs, dedicated
+// servers, tools, demos, DLC, etc. have no playtime/achievements of their
+// own to tag anyway, and were a large share of the earlier "Unknown Game"
+// backlog noise. Cuts the total number of backend RPC calls a full sync
+// makes substantially, which is also the current working theory for the
+// repeated Millennium native-host crash (three real-device crashes at
+// the identical faulting instruction, unaffected by the pacing delay or
+// the implausible-appid filter -- pointing at cumulative call volume over
+// a sync rather than one specific bad value).
+function isTrackableAppType(appType: EAppType): boolean {
+	return appType === EAppType.Game || appType === EAppType.Shortcut;
+}
+
+function isTrackableApp(overview: SteamAppOverview): boolean {
+	return isPlausibleAppId(overview.appid) && isTrackableAppType(overview.app_type);
+}
+
+/**
+ * Same resolution as getAllOwnedAppIds(), but keyed by appid for
+ * per-game lookups (name, playtime, etc.) -- steamData.ts's
+ * readGameSnapshot() uses this instead of calling
+ * SteamClient.Apps.GetAllApps() directly, so both enumeration and
+ * per-game reads always agree on which underlying source actually has
+ * data in this session.
+ */
+export function getAppOverviewMap(): Map<number, SteamAppOverview> {
+	const map = new Map<number, SteamAppOverview>();
+	for (const overview of resolveAppOverviews().overviews) {
+		if (isTrackableApp(overview)) {
+			map.set(overview.appid, overview);
+		}
 	}
-
-	const fromCollectionAll = w.collectionStore?.allAppsCollection?.allApps;
-	if (fromCollectionAll && fromCollectionAll.length > 0) {
-		return dedupeAppIds(fromCollectionAll);
-	}
-
-	const fromCollectionGames = w.collectionStore?.allGamesCollection?.allApps;
-	if (fromCollectionGames && fromCollectionGames.length > 0) {
-		return dedupeAppIds(fromCollectionGames);
-	}
-
-	const fromAppStoreAll = w.appStore?.allApps;
-	if (fromAppStoreAll && fromAppStoreAll.length > 0) {
-		return dedupeAppIds(fromAppStoreAll);
-	}
-
-	const fromAppStoreMap = w.appStore?.m_mapApps;
-	if (fromAppStoreMap && fromAppStoreMap.size > 0) {
-		return Array.from(fromAppStoreMap.keys()).filter((appid) => appid > 0);
-	}
-
-	return [];
+	return map;
 }
 
 function dedupeAppIds(overviews: SteamAppOverview[]): number[] {
 	const ids = new Set<number>();
+	let filteredOut = 0;
 	for (const overview of overviews) {
-		if (overview.appid > 0) {
+		if (isTrackableApp(overview)) {
 			ids.add(overview.appid);
+		} else if (overview.appid > 0) {
+			filteredOut += 1;
 		}
+	}
+	if (filteredOut > 0) {
+		logInfo(`getAllOwnedAppIds: filtered out ${filteredOut} non-game/implausible entr(ies)`);
 	}
 	return Array.from(ids);
 }

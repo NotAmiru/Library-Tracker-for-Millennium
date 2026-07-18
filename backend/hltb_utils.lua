@@ -28,7 +28,21 @@ function M.levenshtein_distance(s1, s2)
 end
 
 --- Strip trademark/copyright symbols and normalize whitespace for comparison.
+---
+--- Steam metadata for some games (e.g. "Battlefieldâ¢ 1") arrives with ™/®/©
+--- already mangled into "mojibake": the correct UTF-8 bytes for the symbol
+--- got decoded as Latin-1/Windows-1252 by something upstream and re-encoded
+--- as UTF-8, so what's actually in the string is 2-3 garbage codepoints
+--- instead of one clean symbol. There are two possible mangled forms per
+--- symbol depending on which single-byte codec did the bad decode (Windows-
+--- 1252 turns ™'s middle byte into a visible „, Latin-1 turns it into an
+--- invisible C1 control character) -- both are stripped since we can't
+--- control which one Steam's pipeline produced.
 function M.sanitize_game_name(name)
+	name = name:gsub("\xc3\xa2\xe2\x80\x9e\xc2\xa2", "") -- mojibake ™ (Windows-1252 double-decode)
+	name = name:gsub("\xc3\xa2\xc2\x84\xc2\xa2", "") -- mojibake ™ (Latin-1 double-decode)
+	name = name:gsub("\xc3\x82\xc2\xae", "") -- mojibake ®
+	name = name:gsub("\xc3\x82\xc2\xa9", "") -- mojibake ©
 	name = name:gsub("™", "")
 	name = name:gsub("®", "")
 	name = name:gsub("©", "")

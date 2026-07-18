@@ -38,5 +38,11 @@ return function()
 	assert(updated.main_story == 6.0)
 	assert(updated.game_name == "Counter-Strike 2", "unrelated fields survive an update to a different field")
 
+	-- peek() ignores TTL entirely -- for display purposes, a slightly
+	-- stale-or-even-hard-expired cached match is still worth showing.
+	assert(cache.peek(730) ~= nil, "peek() should return the entry regardless of staleness")
+	assert(cache.peek(730).main_story == 6.0)
+	assert(cache.peek(999) == nil, "peek() should return nil for an appid that's never been cached")
+
 	print("hltb_cache_spec: OK")
 end

@@ -6,13 +6,19 @@ import { TagManager } from './TagManager';
 
 interface GameTagBadgeProps {
 	appid: number;
+	windowRef: Window;
 }
 
-/** Injected into the game-detail page header by lib/patchLibraryApp.tsx.
- * Syncs `appid` on mount, then renders its current tag (or an "add tag"
- * placeholder), opening TagManager for manual overrides on click. */
-export function GameTagBadge({ appid }: GameTagBadgeProps): JSX.Element | null {
-	const { record, loading, setTag, remove, resetToAuto } = useGameTag(appid);
+/** Mounted directly into Steam's game-detail page icon row by
+ * lib/patchLibraryApp.tsx (a real DOM node, not a React-Router-rendered
+ * child), so it renders inline alongside the native icons rather than as
+ * an absolutely-positioned overlay. Syncs `appid` on mount, then renders
+ * its current tag (or an "add tag" placeholder), opening TagManager for
+ * manual overrides on click. TagManager portals its own overlay to
+ * `windowRef.document.body` rather than rendering inline here -- see its
+ * file comment for why. */
+export function GameTagBadge({ appid, windowRef }: GameTagBadgeProps): JSX.Element | null {
+	const { record, loading } = useGameTag(appid);
 	const [managerOpen, setManagerOpen] = useState(false);
 
 	if (loading) {
@@ -20,39 +26,39 @@ export function GameTagBadge({ appid }: GameTagBadgeProps): JSX.Element | null {
 	}
 
 	return (
-		<div style={{ position: 'absolute', top: '50px', right: '20px', zIndex: 10 }}>
+		<div className="library-tracker-badge" style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}>
 			{record?.tag ? (
 				<GameTag tag={record.tag} isManual={record.is_manual} onClick={() => setManagerOpen(true)} />
 			) : (
 				<div
 					onClick={() => setManagerOpen(true)}
+					className="library-tracker-badge__add-tag"
 					style={{
-						padding: '4px 10px',
-						borderRadius: '999px',
-						border: '1px dashed #888',
-						color: '#888',
+						display: 'inline-flex',
+						alignItems: 'center',
+						gap: '6px',
+						padding: '4px 8px',
+						borderRadius: '4px',
+						color: '#8f98a0',
 						fontSize: '13px',
+						fontWeight: 600,
 						cursor: 'pointer',
 					}}
 				>
-					+ Add Tag
+					<span
+						className="library-tracker-badge__add-tag-dot"
+						style={{
+							width: '8px',
+							height: '8px',
+							borderRadius: '50%',
+							border: '1px dashed #8f98a0',
+							flexShrink: 0,
+						}}
+					/>
+					<span className="library-tracker-badge__add-tag-label">ADD TAG</span>
 				</div>
 			)}
-			{managerOpen && (
-				<TagManager
-					record={record}
-					onClose={() => setManagerOpen(false)}
-					onSetTag={(tag) => {
-						void setTag(tag);
-					}}
-					onRemove={() => {
-						void remove().then(() => setManagerOpen(false));
-					}}
-					onResetToAuto={() => {
-						void resetToAuto();
-					}}
-				/>
-			)}
+			{managerOpen && <TagManager appid={appid} windowRef={windowRef} onClose={() => setManagerOpen(false)} />}
 		</div>
 	);
 }

@@ -11,6 +11,15 @@ return function()
 	assert(utils.sanitize_game_name("Portal®  2") == "Portal 2")
 	assert(utils.sanitize_game_name("  Trimmed  ") == "Trimmed")
 
+	-- sanitize_game_name also strips mojibake TM/R/C marks: cases where the
+	-- correct UTF-8 symbol was decoded as Latin-1/Windows-1252 and
+	-- re-encoded, mangling one clean codepoint into 2-3 garbage ones
+	-- (e.g. Steam sometimes reports "Battlefieldâ¢ 1" for "Battlefield™ 1").
+	assert(utils.sanitize_game_name("Battlefield\xc3\xa2\xe2\x80\x9e\xc2\xa2 1") == "Battlefield 1")
+	assert(utils.sanitize_game_name("Battlefield\xc3\xa2\xc2\x84\xc2\xa2 1") == "Battlefield 1")
+	assert(utils.sanitize_game_name("Portal\xc3\x82\xc2\xae 2") == "Portal 2")
+	assert(utils.sanitize_game_name("Some Game\xc3\x82\xc2\xa9") == "Some Game")
+
 	-- simplify_game_name strips edition suffixes.
 	assert(utils.simplify_game_name("Company of Heroes - Legacy Edition") == "Company of Heroes")
 	assert(utils.simplify_game_name("Artifact Classic") == "Artifact")

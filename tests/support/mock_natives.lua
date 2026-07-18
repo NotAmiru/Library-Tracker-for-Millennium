@@ -38,6 +38,11 @@ function M.install()
 		function fs.join(...)
 			return table.concat({ ... }, "/")
 		end
+		function fs.remove(path)
+			local existed = files[path] ~= nil
+			files[path] = nil
+			return existed
+		end
 		return fs
 	end
 

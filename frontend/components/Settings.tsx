@@ -44,10 +44,11 @@ export function Settings(): JSX.Element {
 
 	const handleSync = useCallback(async () => {
 		setSyncing(true);
-		setMessage('Syncing library...');
+		setMessage('Checking for games to sync...');
 		try {
 			const result = await syncLibraryProgressive((progress) => {
-				setMessage(`Syncing ${progress.current}/${progress.total}...`);
+				const prefix = progress.resumed ? 'Resuming sync' : 'Syncing';
+				setMessage(`${prefix} ${progress.current}/${progress.total}...`);
 			});
 			setMessage(`Synced ${result.total} games, ${result.newTags} tag changes, ${result.errors} error(s).`);
 			await refresh();

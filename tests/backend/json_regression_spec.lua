@@ -32,7 +32,6 @@ return function()
 	package.loaded["json"] = nil
 
 	local main = require("main")
-	local storage = require("storage")
 
 	local empty_tagged = main.get_tagged_games()
 	assert(
@@ -46,12 +45,91 @@ return function()
 		"expected an empty backlog list to encode as a JSON array, got: " .. empty_backlog
 	)
 
-	-- A non-empty list still round-trips correctly as an array.
-	storage.upsert(730, { game_name = "Counter-Strike 2", tag = "in_progress" })
+	-- Second real-device bug this same "use a real JSON library" approach
+	-- caught: a real Millennium install (v3.3.1) spreads a multi-key
+	-- object argument to callable() into positional Lua arguments sorted
+	-- alphabetically by key, rather than delivering a single Lua table --
+	-- frontend/lib/rpc.ts's jsonRpc() now wraps every call's params in a
+	-- single-key { data: "<json>" } object specifically to sidestep this,
+	-- so every RPC function must decode a raw JSON *string* argument, not
+	-- receive an already-decoded table. Exercise that exact shape here:
+	-- sync_game(data) where data is the plain JSON text, matching what
+	-- the real bridge delivers.
+	local sync_payload = cjson.encode({
+		appid = 730,
+		game_name = "Counter-Strike 2",
+		playtime_minutes = 45,
+		total_achievements = 0,
+		unlocked_achievements = 0,
+	})
+	local sync_response = main.sync_game(sync_payload)
+	local decoded_sync = cjson.decode(sync_response)
+	assert(decoded_sync.success == true, "expected sync_game to succeed given a raw JSON string argument")
+	assert(decoded_sync.tag == "in_progress", "expected in_progress from the synced data, got: " .. tostring(decoded_sync.tag))
+
+	-- A non-empty list still round-trips correctly as an array, using the
+	-- record sync_game just created above.
 	local populated = main.get_tagged_games()
 	local decoded = cjson.decode(populated)
 	assert(type(decoded.games) == "table", "expected games field to decode to a table")
 	assert(decoded.games[1].game_name == "Counter-Strike 2")
+
+	-- log_frontend, same single-JSON-string-argument shape.
+	local log_payload = cjson.encode({ level = "info", message = "hello from a test" })
+	local log_response = main.log_frontend(log_payload)
+	local decoded_log = cjson.decode(log_response)
+	assert(decoded_log.success == true, "expected log_frontend to succeed given a raw JSON string argument")
+
+	-- get_hltb_data: null when nothing's cached yet, populated once
+	-- sync.sync_game's HLTB lookup has run (which the sync_game call
+	-- above already triggered for appid 730 -- the mocked http module
+	-- makes that lookup fail cleanly, so a miss gets cached).
+	local hltb_response = main.get_hltb_data(cjson.encode({ appid = 730 }))
+	local decoded_hltb = cjson.decode(hltb_response)
+	assert(decoded_hltb.success == true)
+	assert(type(decoded_hltb.hltb) == "table", "expected a cached (miss) entry for appid 730 after its sync")
+
+	local hltb_missing_response = main.get_hltb_data(cjson.encode({ appid = 999999 }))
+	local decoded_hltb_missing = cjson.decode(hltb_missing_response)
+	assert(decoded_hltb_missing.success == true)
+	assert(decoded_hltb_missing.hltb == nil, "expected null hltb for an appid that's never been synced")
+
+	-- Sync queue RPCs: same real-JSON-serialization exposure as above,
+	-- specifically for the empty-pending-array case sync_queue.lua's
+	-- encode_queue() exists to handle correctly (see its own comment).
+	local no_queue_response = main.get_sync_queue()
+	local decoded_no_queue = cjson.decode(no_queue_response)
+	assert(decoded_no_queue.success == true)
+	assert(decoded_no_queue.queue == nil, "expected no queue before start_sync_queue")
+
+	local start_response = main.start_sync_queue(cjson.encode({ appids = { 730, 440 } }))
+	local decoded_start = cjson.decode(start_response)
+	assert(decoded_start.success == true and decoded_start.total == 2)
+
+	local queue_response = main.get_sync_queue()
+	local decoded_queue = cjson.decode(queue_response)
+	assert(decoded_queue.success == true)
+	assert(type(decoded_queue.queue.pending) == "table" and #decoded_queue.queue.pending == 2)
+
+	main.pop_sync_queue(cjson.encode({ appid = 730 }))
+	local drained_response = main.pop_sync_queue(cjson.encode({ appid = 440 }))
+	local decoded_drained = cjson.decode(drained_response)
+	assert(decoded_drained.success == true and decoded_drained.remaining == 0)
+
+	-- The now-empty pending list must still round-trip as a JSON array,
+	-- not an object -- exactly the bug encode_array()/encode_queue() were
+	-- written to prevent.
+	local empty_queue_response = main.get_sync_queue()
+	assert(
+		empty_queue_response:find('"pending":%[%]', 1, false) ~= nil,
+		"expected an empty pending list to encode as a JSON array, got: " .. empty_queue_response
+	)
+
+	local clear_response = main.clear_sync_queue()
+	local decoded_clear = cjson.decode(clear_response)
+	assert(decoded_clear.success == true)
+	local after_clear = cjson.decode(main.get_sync_queue())
+	assert(after_clear.queue == nil, "expected no queue after clear_sync_queue")
 
 	print("json_regression_spec: OK")
 end

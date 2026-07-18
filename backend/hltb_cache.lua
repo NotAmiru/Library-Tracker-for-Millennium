@@ -113,6 +113,17 @@ function M.get(appid, soft_ttl_seconds, hard_ttl_seconds)
 	return entry, age > soft_ttl_seconds
 end
 
+--- Returns whatever is cached for `appid` regardless of TTL/staleness --
+--- for UI display purposes only. A tag-calculation caller cares whether
+--- data might be stale enough to warrant a re-fetch (use M.get for
+--- that); a UI showing "here's the HLTB match we found" doesn't need to
+--- care, and re-deriving the same soft/hard TTL just to immediately
+--- ignore the is_stale result would be pointless. Returns nil if
+--- nothing has ever been cached for this appid.
+function M.peek(appid)
+	return load()[tostring(appid)]
+end
+
 --- Merges `fields` onto the existing cache entry for `appid` (creating
 --- one if absent) rather than overwriting it wholesale -- a value of nil
 --- in `fields` leaves any existing value for that field untouched, so a

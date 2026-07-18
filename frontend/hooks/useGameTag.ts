@@ -4,6 +4,30 @@ import { removeTag, resetToAutoTag, setManualTag } from '../lib/tagActions';
 import { logError } from '../lib/log';
 import type { GameRecord, TagName } from '../types';
 
+const SYNC_TIMEOUT_MS = 8000;
+
+/** A hung syncGame() call (e.g. SteamClient.Apps.GetMyAchievementsForApp
+ * never resolving for a game Steam hasn't loaded achievement data for
+ * this session) must not block the badge from ever showing anything --
+ * without this, `loading` would never flip to `false` and the whole
+ * badge stays invisible indefinitely rather than falling back to
+ * whatever's already stored. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error: unknown) => {
+				clearTimeout(timer);
+				reject(error instanceof Error ? error : new Error(String(error)));
+			},
+		);
+	});
+}
+
 interface UseGameTagResult {
 	record: GameRecord | null;
 	loading: boolean;
@@ -38,14 +62,24 @@ export function useGameTag(appid: number): UseGameTagResult {
 
 		const initialSync = async () => {
 			setLoading(true);
+			// A failed or hung sync attempt must not prevent showing
+			// whatever's already correctly stored from a previous sync --
+			// these two steps used to be one try block, so a syncGame()
+			// failure (throw or hang) meant getGameRecord() never even ran,
+			// leaving the badge stuck on "+ Add Tag" (or blank entirely)
+			// regardless of the real, already-tagged state in storage.
 			try {
-				await syncGame(appid);
+				await withTimeout(syncGame(appid), SYNC_TIMEOUT_MS);
+			} catch (error) {
+				logError(`initial sync for appid ${appid} failed`, error);
+			}
+			try {
 				const result = await getGameRecord(appid);
 				if (!cancelled) {
 					setRecord(result.record);
 				}
 			} catch (error) {
-				logError(`initial sync for appid ${appid} failed`, error);
+				logError(`getGameRecord(${appid}) failed`, error);
 			} finally {
 				if (!cancelled) {
 					setLoading(false);
