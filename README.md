@@ -29,7 +29,17 @@ Settings:
 
 ## Installation
 
-This plugin isn't published to the Millennium plugin marketplace yet, and targets Millennium's established "loose files" plugin format (`plugin.json` + a `backend/` Lua directory + a built frontend bundle) rather than the newer `.star` packed format, which as of writing is unreleased dev-branch-only code not yet in any tagged Millennium release. To install it manually:
+This plugin isn't published to the Millennium plugin marketplace yet, and targets Millennium's established "loose files" plugin format (`plugin.json` + a `backend/` Lua directory + a built frontend bundle) rather than the newer `.star` packed format, which as of writing is unreleased dev-branch-only code not yet in any tagged Millennium release.
+
+### Option A: download a release (no build tools needed)
+
+1. Grab the latest `library-tracker-vX.Y.Z.zip` from the [Releases page](https://github.com/NotAmiru/Library-Tracker-for-Millennium/releases).
+2. Unzip it — you'll get a `library-tracker/` folder containing `plugin.json`, `backend/`, and `.millennium/Dist/`.
+3. If you're updating an existing install, **delete the old `library-tracker` folder first** rather than extracting over it — some unzip tools silently skip files that already exist, which can leave a stale build in place.
+4. Move the `library-tracker/` folder into your Millennium plugins directory.
+5. Fully restart Steam, then enable the plugin from Millennium's settings.
+
+### Option B: build from source
 
 ```bash
 git clone https://github.com/NotAmiru/Library-Tracker-for-Millennium.git
