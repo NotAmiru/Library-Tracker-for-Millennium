@@ -3,7 +3,7 @@
 	"name": "library-tracker",
 	"common_name": "Library Tracker",
 	"description": "Automatic game progress tracking with achievement %, HowLongToBeat estimates, and Mastered/Completed/In Progress/Dropped tags.",
-	"version": "0.1.0",
+	"version": "1.0.0",
 	"useBackend": true,
 	"backendType": "lua"
 }
