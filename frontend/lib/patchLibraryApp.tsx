@@ -3,6 +3,7 @@ import type { Root } from 'react-dom/client';
 import { Millennium } from '@steambrew/client';
 import { GameTagBadge } from '../components/GameTagBadge';
 import { logError, logInfo } from './log';
+import { mountDebugTestButton } from './debugTestButton';
 
 // Every earlier approach in this file's history failed for the same
 // underlying reason: this plugin's script runs in its own isolated CDP
@@ -209,14 +210,19 @@ async function onPopupCreation(popup: DesktopPopup): Promise<void> {
 		return;
 	}
 
-	// The real Window object backing the desktop popup -- needed so
-	// showModal() (used by TagManager to open the stats dialog) attaches
-	// to Steam's own modal system instead of our plugin's isolated one.
-	// Falls back to the bridged bare `window` global (see file-level
-	// comment: this callback runs in a context Millennium bridges into
-	// the real window) rather than the plugin's own top-level `window`,
-	// which would be the wrong, isolated one.
+	// The real Window object backing the desktop popup -- TagManager's
+	// dialog portals into `windowRef.document.body`, so this needs to be
+	// the actual popup window, not the plugin's own isolated one. Falls
+	// back to the bridged bare `window` global (see file-level comment:
+	// this callback runs in a context Millennium bridges into the real
+	// window) only if `popup.m_popup.window` is somehow unavailable.
 	const windowRef = popup.m_popup?.window ?? window;
+
+	// TEMPORARY: floating "TEST TAG MODAL" button visible on every library
+	// page, for isolating whether TagManager's dialog renders correctly
+	// independent of the game-detail-page icon-row mount below. Remove
+	// once the black-box issue is confirmed fixed. See debugTestButton.tsx.
+	mountDebugTestButton(doc, windowRef);
 
 	logInfo('MainWindowBrowserManager ready, registering finished-request listener');
 	mwbm.m_browser.on('finished-request', () => {
