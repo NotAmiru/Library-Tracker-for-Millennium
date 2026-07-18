@@ -26,12 +26,13 @@ export function GameTagBadge({ appid, windowRef }: GameTagBadgeProps): JSX.Eleme
 	}
 
 	return (
-		<div style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}>
+		<div className="library-tracker-badge" style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}>
 			{record?.tag ? (
 				<GameTag tag={record.tag} isManual={record.is_manual} onClick={() => setManagerOpen(true)} />
 			) : (
 				<div
 					onClick={() => setManagerOpen(true)}
+					className="library-tracker-badge__add-tag"
 					style={{
 						display: 'inline-flex',
 						alignItems: 'center',
@@ -45,6 +46,7 @@ export function GameTagBadge({ appid, windowRef }: GameTagBadgeProps): JSX.Eleme
 					}}
 				>
 					<span
+						className="library-tracker-badge__add-tag-dot"
 						style={{
 							width: '8px',
 							height: '8px',
@@ -53,7 +55,7 @@ export function GameTagBadge({ appid, windowRef }: GameTagBadgeProps): JSX.Eleme
 							flexShrink: 0,
 						}}
 					/>
-					<span>ADD TAG</span>
+					<span className="library-tracker-badge__add-tag-label">ADD TAG</span>
 				</div>
 			)}
 			{managerOpen && <TagManager appid={appid} windowRef={windowRef} onClose={() => setManagerOpen(false)} />}

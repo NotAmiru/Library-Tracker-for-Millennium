@@ -31,7 +31,7 @@ export function GameListSection({ tag, count, games, onExpand }: GameListSection
 	const color = tag === 'backlog' ? '#888' : TAG_COLORS[tag];
 
 	return (
-		<div style={{ marginBottom: '8px' }}>
+		<div className={`library-tracker-list-section library-tracker-list-section--${tag}`} style={{ marginBottom: '8px' }}>
 			<div
 				onClick={() => {
 					const next = !expanded;
@@ -40,6 +40,7 @@ export function GameListSection({ tag, count, games, onExpand }: GameListSection
 						onExpand?.();
 					}
 				}}
+				className="library-tracker-list-section__header"
 				style={{
 					display: 'flex',
 					alignItems: 'center',
@@ -50,23 +51,28 @@ export function GameListSection({ tag, count, games, onExpand }: GameListSection
 					fontWeight: 600,
 				}}
 			>
-				<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+				<span className="library-tracker-list-section__label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
 					{tag !== 'backlog' && <TagIcon tag={tag} />}
 					{label} ({count})
 				</span>
-				<span>{expanded ? '▾' : '▸'}</span>
+				<span className="library-tracker-list-section__arrow">{expanded ? '▾' : '▸'}</span>
 			</div>
 			{expanded && (
-				<Focusable flow-children="down" style={{ display: 'flex', flexDirection: 'column' }}>
+				<Focusable flow-children="down" className="library-tracker-list-section__games" style={{ display: 'flex', flexDirection: 'column' }}>
 					{games === null ? (
-						<div style={{ padding: '4px 12px', fontSize: '12px', color: '#8f98a0' }}>Loading...</div>
+						<div className="library-tracker-list-section__empty" style={{ padding: '4px 12px', fontSize: '12px', color: '#8f98a0' }}>
+							Loading...
+						</div>
 					) : games.length === 0 ? (
-						<div style={{ padding: '4px 12px', fontSize: '12px', color: '#8f98a0' }}>No games</div>
+						<div className="library-tracker-list-section__empty" style={{ padding: '4px 12px', fontSize: '12px', color: '#8f98a0' }}>
+							No games
+						</div>
 					) : (
 						games.map((game) => (
 							<div
 								key={game.appid}
 								onClick={() => openGame(game.appid)}
+								className="library-tracker-list-section__game-row"
 								style={{ padding: '4px 12px', fontSize: '13px', cursor: 'pointer' }}
 							>
 								{game.game_name}

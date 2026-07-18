@@ -32,18 +32,26 @@ function formatHours(hours: number | undefined): string {
 	return `${hours.toFixed(1)} hrs`;
 }
 
-function StatRow({ label, value }: { label: string; value: string }): JSX.Element {
+function StatRow({ name, label, value }: { name: string; label: string; value: string }): JSX.Element {
 	return (
-		<div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '3px 0' }}>
-			<span style={{ color: '#8f98a0' }}>{label}</span>
-			<span style={{ color: '#fff', fontWeight: 500 }}>{value}</span>
+		<div
+			className={`library-tracker-stat-row library-tracker-stat-row--${name}`}
+			style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '3px 0' }}
+		>
+			<span className="library-tracker-stat-row__label" style={{ color: '#8f98a0' }}>
+				{label}
+			</span>
+			<span className="library-tracker-stat-row__value" style={{ color: '#fff', fontWeight: 500 }}>
+				{value}
+			</span>
 		</div>
 	);
 }
 
-function SectionHeader({ children }: { children: string }): JSX.Element {
+function SectionHeader({ name, children }: { name: string; children: string }): JSX.Element {
 	return (
 		<div
+			className={`library-tracker-section-header library-tracker-section-header--${name}`}
 			style={{
 				fontSize: '11px',
 				fontWeight: 700,
@@ -73,10 +81,12 @@ function SectionHeader({ children }: { children: string }): JSX.Element {
 function ActionButton({
 	children,
 	onClick,
+	className,
 	style,
 }: {
 	children: ReactNode;
 	onClick: () => void;
+	className?: string;
 	style?: CSSProperties;
 }): JSX.Element {
 	const [hovered, setHovered] = useState(false);
@@ -85,6 +95,7 @@ function ActionButton({
 			onClick={onClick}
 			onMouseEnter={() => setHovered(true)}
 			onMouseLeave={() => setHovered(false)}
+			className={`library-tracker-action-button${className ? ` ${className}` : ''}${hovered ? ' library-tracker-action-button--hovered' : ''}`}
 			style={{
 				textAlign: 'center',
 				padding: '8px',
@@ -123,7 +134,12 @@ function ActionButton({
  * per Steam build, and did produce the same empty-box symptom here
  * regardless of mounting strategy (inline overlay, Steam's own
  * showModal/ModalRoot, and this portal all showed it identically, and
- * Focusable/DialogButton was the one thing common to all three). */
+ * Focusable/DialogButton was the one thing common to all three).
+ *
+ * Every element carries a `library-tracker-*` className alongside its
+ * inline style (which stays as the default look) so Quick CSS themes can
+ * target and override pieces individually -- see README.md's Theming
+ * section for the full class list. */
 export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.Element | null {
 	const { record, setTag, remove, resetToAuto } = useGameTag(appid);
 	const [hltb, setHltb] = useState<HltbData | null>(null);
@@ -153,6 +169,7 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 
 	return createPortal(
 		<div
+			className="library-tracker-dialog-overlay"
 			style={{
 				position: 'fixed',
 				inset: 0,
@@ -166,6 +183,7 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 		>
 			<div
 				onClick={stopPropagation}
+				className="library-tracker-dialog"
 				style={{
 					background: '#1b2838',
 					borderRadius: '8px',
@@ -176,10 +194,16 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 					gap: '14px',
 				}}
 			>
-				<div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
-					<div style={{ fontSize: '17px', fontWeight: 700, color: '#fff' }}>{record?.game_name ?? 'Game'}</div>
+				<div
+					className="library-tracker-dialog__header"
+					style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}
+				>
+					<div className="library-tracker-dialog__title" style={{ fontSize: '17px', fontWeight: 700, color: '#fff' }}>
+						{record?.game_name ?? 'Game'}
+					</div>
 					{activeTag && (
 						<div
+							className={`library-tracker-dialog__status library-tracker-dialog__status--${activeTag}`}
 							style={{
 								display: 'flex',
 								alignItems: 'center',
@@ -194,34 +218,36 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 								textTransform: 'uppercase',
 							}}
 						>
-							<span>✓</span>
-							<span>
+							<span className="library-tracker-dialog__status-icon">✓</span>
+							<span className="library-tracker-dialog__status-label">
 								{TAG_LABELS[activeTag]} {record?.is_manual ? '(Manual)' : '(Auto)'}
 							</span>
 						</div>
 					)}
 				</div>
 
-				<div>
-					<SectionHeader>Statistics</SectionHeader>
-					<StatRow label="Playtime" value={record ? formatPlaytime(record.playtime_minutes) : '0h 0m'} />
+				<div className="library-tracker-dialog__section library-tracker-dialog__section--statistics">
+					<SectionHeader name="statistics">Statistics</SectionHeader>
+					<StatRow name="playtime" label="Playtime" value={record ? formatPlaytime(record.playtime_minutes) : '0h 0m'} />
 					<StatRow
+						name="achievements"
 						label="Achievements"
 						value={record ? `${record.unlocked_achievements}/${record.total_achievements}` : '0/0'}
 					/>
-					<StatRow label="HLTB Match" value={hltb?.matched_name ?? 'Not found'} />
-					<StatRow label="Main Story" value={formatHours(hltb?.main_story)} />
+					<StatRow name="hltb-match" label="HLTB Match" value={hltb?.matched_name ?? 'Not found'} />
+					<StatRow name="main-story" label="Main Story" value={formatHours(hltb?.main_story)} />
 				</div>
 
-				<div>
-					<SectionHeader>Set Tag</SectionHeader>
-					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+				<div className="library-tracker-dialog__section library-tracker-dialog__section--set-tag">
+					<SectionHeader name="set-tag">Set Tag</SectionHeader>
+					<div className="library-tracker-tag-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
 						{ALL_TAGS.map((tag) => {
 							const isActive = activeTag === tag;
 							return (
 								<ActionButton
 									key={tag}
 									onClick={() => void setTag(tag)}
+									className={`library-tracker-action-button--${tag}${isActive ? ' library-tracker-action-button--active' : ''}`}
 									style={{
 										background: TAG_COLORS[tag],
 										border: isActive ? '2px solid #fff' : '2px solid transparent',
@@ -234,16 +260,20 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 					</div>
 				</div>
 
-				<div style={{ display: 'flex', gap: '8px' }}>
-					<ActionButton onClick={() => void resetToAuto()} style={{ flex: 1 }}>
+				<div className="library-tracker-dialog__actions" style={{ display: 'flex', gap: '8px' }}>
+					<ActionButton onClick={() => void resetToAuto()} className="library-tracker-action-button--reset" style={{ flex: 1 }}>
 						Reset to Auto
 					</ActionButton>
-					<ActionButton onClick={() => void remove().then(onClose)} style={{ flex: 1 }}>
+					<ActionButton
+						onClick={() => void remove().then(onClose)}
+						className="library-tracker-action-button--remove"
+						style={{ flex: 1 }}
+					>
 						Remove
 					</ActionButton>
 				</div>
 
-				<ActionButton onClick={onClose} style={{ width: '100%' }}>
+				<ActionButton onClick={onClose} className="library-tracker-action-button--close" style={{ width: '100%' }}>
 					Close
 				</ActionButton>
 			</div>

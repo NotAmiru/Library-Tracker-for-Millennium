@@ -21,6 +21,7 @@ export function GameTag({ tag, isManual, onClick }: GameTagProps): JSX.Element {
 			onMouseEnter={() => setHovered(true)}
 			onMouseLeave={() => setHovered(false)}
 			title={isManual ? `${TAG_LABELS[tag]} (manually set)` : TAG_LABELS[tag]}
+			className={`library-tracker-pill library-tracker-pill--${tag}${isManual ? ' library-tracker-pill--manual' : ''}`}
 			style={{
 				display: 'inline-flex',
 				alignItems: 'center',
@@ -33,6 +34,7 @@ export function GameTag({ tag, isManual, onClick }: GameTagProps): JSX.Element {
 			}}
 		>
 			<span
+				className="library-tracker-pill__dot"
 				style={{
 					width: '8px',
 					height: '8px',
@@ -41,11 +43,14 @@ export function GameTag({ tag, isManual, onClick }: GameTagProps): JSX.Element {
 					flexShrink: 0,
 				}}
 			/>
-			<span style={{ color, fontSize: '13px', fontWeight: 600, letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+			<span
+				className="library-tracker-pill__label"
+				style={{ color, fontSize: '13px', fontWeight: 600, letterSpacing: '0.02em', textTransform: 'uppercase' }}
+			>
 				{TAG_LABELS[tag]}
 			</span>
 			{isManual && (
-				<span style={{ color: '#8f98a0', fontSize: '11px' }} title="Manually set">
+				<span className="library-tracker-pill__manual-icon" style={{ color: '#8f98a0', fontSize: '11px' }} title="Manually set">
 					✎
 				</span>
 			)}

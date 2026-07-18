@@ -95,6 +95,63 @@ All configurable via the in-app Settings panel:
 | HLTB cache refresh | 12 hr | Soft TTL — a cached HLTB match older than this is treated as stale (but still served) |
 | HLTB cache expiry | 90 days | Hard TTL — a cached HLTB match older than this is re-fetched |
 
+## Theming
+
+Every element of the plugin's own UI (the icon-row badge, the tag pill, the stats dialog, and the dashboard list in the Settings panel) carries a `library-tracker-*` class name alongside its default inline style, so a Millennium theme can override any piece of it via Quick CSS — inline styles win over an unscoped selector, so overrides need `!important`.
+
+Steam-native components the plugin reuses as-is (`PanelSection`, `PanelSectionRow`, `SliderField`, `ButtonItem` in the Settings panel) aren't included below — they already carry Steam's own theme-able classes.
+
+**Icon-row badge** (`GameTagBadge.tsx`, `GameTag.tsx`) — mounted into the game-detail page's icon row:
+
+| Class | Targets |
+|---|---|
+| `library-tracker-badge` | Outer wrapper around the pill/placeholder |
+| `library-tracker-badge__add-tag` | The "ADD TAG" placeholder shown when a game has no tag yet |
+| `library-tracker-badge__add-tag-dot` | Dashed circle inside the placeholder |
+| `library-tracker-badge__add-tag-label` | The "ADD TAG" text |
+| `library-tracker-pill` | The colored tag pill shown once a game is tagged |
+| `library-tracker-pill--mastered` / `--completed` / `--in_progress` / `--dropped` | Per-tag modifier on the pill (matches the tag name) |
+| `library-tracker-pill--manual` | Added when the tag was set manually rather than auto-computed |
+| `library-tracker-pill__dot` | The small colored dot inside the pill |
+| `library-tracker-pill__label` | The tag's text label |
+| `library-tracker-pill__manual-icon` | The ✎ icon shown for manually-set tags |
+
+**Stats dialog** (`TagManager.tsx`) — opened by clicking the badge/pill:
+
+| Class | Targets |
+|---|---|
+| `library-tracker-dialog-overlay` | Full-screen dark backdrop |
+| `library-tracker-dialog` | The dialog card itself |
+| `library-tracker-dialog__header` | Row containing the title and status pill |
+| `library-tracker-dialog__title` | The game's name |
+| `library-tracker-dialog__status` | The status pill (top-right) |
+| `library-tracker-dialog__status--mastered` / `--completed` / `--in_progress` / `--dropped` | Per-tag modifier on the status pill |
+| `library-tracker-dialog__status-icon` | The ✓ inside the status pill |
+| `library-tracker-dialog__status-label` | The status pill's text |
+| `library-tracker-dialog__section--statistics` / `--set-tag` | The two content sections |
+| `library-tracker-section-header` | "STATISTICS" / "SET TAG" headers (also carries `--statistics` / `--set-tag`) |
+| `library-tracker-stat-row` | One label/value row (also carries `--playtime`, `--achievements`, `--hltb-match`, or `--main-story`) |
+| `library-tracker-stat-row__label` / `__value` | The two halves of a stat row |
+| `library-tracker-tag-grid` | The 2×2 grid of tag-select buttons |
+| `library-tracker-action-button` | Every button in the dialog (tag-select, Reset to Auto, Remove, Close) |
+| `library-tracker-action-button--mastered` / `--completed` / `--in_progress` / `--dropped` | Per-tag modifier on the 4 tag-select buttons |
+| `library-tracker-action-button--active` | Added to whichever tag-select button matches the current tag |
+| `library-tracker-action-button--hovered` | Added while a button is hovered (no `:hover` CSS support since these are Millennium-injected inline styles) |
+| `library-tracker-action-button--reset` / `--remove` / `--close` | Identify the Reset to Auto / Remove / Close buttons specifically |
+| `library-tracker-dialog__actions` | Row wrapping the Reset to Auto / Remove buttons |
+
+**Dashboard list** (`GameListSection.tsx`) — in the Settings panel:
+
+| Class | Targets |
+|---|---|
+| `library-tracker-list-section` | One tag-grouped section (also carries `--mastered`, `--completed`, `--in_progress`, `--dropped`, or `--backlog`) |
+| `library-tracker-list-section__header` | The clickable header row |
+| `library-tracker-list-section__label` | The tag icon + name + count |
+| `library-tracker-list-section__arrow` | The ▾/▸ expand indicator |
+| `library-tracker-list-section__games` | The expanded list of games |
+| `library-tracker-list-section__game-row` | One clickable game row |
+| `library-tracker-list-section__empty` | The "Loading..." / "No games" placeholder |
+
 ## Known limitations
 
 This port was built and verified without access to a running Steam/Millennium instance or to the live HowLongToBeat API (both blocked by this development environment's network policy). Everything here has been verified at the level the environment allows — Lua unit tests against mocked native modules, strict TypeScript compilation against `@steambrew/client`'s real types, and a successful `millennium-ttc` build producing `.millennium/Dist/index.js` — but the following haven't been exercised against the real thing and should be the first things checked when testing in an actual Steam client:
