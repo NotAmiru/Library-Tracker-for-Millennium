@@ -97,6 +97,7 @@ function ActionButton({
 			onMouseLeave={() => setHovered(false)}
 			className={`library-tracker-action-button${className ? ` ${className}` : ''}${hovered ? ' library-tracker-action-button--hovered' : ''}`}
 			style={{
+				boxSizing: 'border-box',
 				textAlign: 'center',
 				padding: '8px',
 				borderRadius: '4px',
