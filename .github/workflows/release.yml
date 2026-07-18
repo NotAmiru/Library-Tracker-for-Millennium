@@ -1,0 +1,76 @@
+name: Release
+
+# Builds the plugin and publishes a ready-to-install zip as a GitHub
+# Release, so installing doesn't require Node.js/npm at all -- just
+# download the zip from the Releases page, unzip, and drop the folder
+# into the Millennium plugins directory (see README.md's Installation
+# section).
+#
+# Two ways to cut a release:
+#   1. Push a tag matching v*.*.* (e.g. `git tag v0.2.0 && git push origin v0.2.0`).
+#   2. From the Actions tab, run this workflow manually ("Run workflow")
+#      and type the version tag -- creates the tag too, no local git
+#      access needed.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to release (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Backend tests
+        run: |
+          sudo apt-get update && sudo apt-get install -y lua5.1
+          lua5.1 tests/run.lua
+
+      - name: Build release bundle
+        run: npm run build:release
+
+      - name: Determine version tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package plugin (loose-files layout)
+        run: |
+          set -euo pipefail
+          PKG_DIR="dist/library-tracker"
+          mkdir -p "$PKG_DIR/.millennium/Dist"
+          cp plugin.json "$PKG_DIR/"
+          cp -r backend "$PKG_DIR/"
+          cp .millennium/Dist/index.js "$PKG_DIR/.millennium/Dist/"
+          (cd dist && zip -r "library-tracker-${{ steps.version.outputs.tag }}.zip" library-tracker)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          files: dist/library-tracker-*.zip
+          generate_release_notes: true
