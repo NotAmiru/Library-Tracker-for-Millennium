@@ -1,34 +1,36 @@
-import { useState } from 'react';
 import type { JSX } from 'react';
 import { useGameTag } from '../hooks/useGameTag';
 import { GameTag } from './GameTag';
-import { TagManager } from './TagManager';
+import { openTagManagerModal } from './TagManager';
 
 interface GameTagBadgeProps {
 	appid: number;
+	windowRef: Window;
 }
 
 /** Mounted directly into Steam's game-detail page icon row by
  * lib/patchLibraryApp.tsx (a real DOM node, not a React-Router-rendered
  * child), so it renders inline alongside the native icons rather than as
  * an absolutely-positioned overlay. Syncs `appid` on mount, then renders
- * its current tag (or an "add tag" placeholder), opening TagManager for
- * manual overrides on click. */
-export function GameTagBadge({ appid }: GameTagBadgeProps): JSX.Element | null {
-	const { record, loading, setTag, remove, resetToAuto } = useGameTag(appid);
-	const [managerOpen, setManagerOpen] = useState(false);
+ * its current tag (or an "add tag" placeholder); clicking either opens the
+ * tag/stats dialog through Steam's own modal system (see
+ * openTagManagerModal in TagManager.tsx) rather than an in-tree overlay. */
+export function GameTagBadge({ appid, windowRef }: GameTagBadgeProps): JSX.Element | null {
+	const { record, loading } = useGameTag(appid);
 
 	if (loading) {
 		return null;
 	}
 
+	const openModal = () => openTagManagerModal(appid, windowRef, record?.game_name ?? 'Game');
+
 	return (
 		<div style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}>
 			{record?.tag ? (
-				<GameTag tag={record.tag} isManual={record.is_manual} onClick={() => setManagerOpen(true)} />
+				<GameTag tag={record.tag} isManual={record.is_manual} onClick={openModal} />
 			) : (
 				<div
-					onClick={() => setManagerOpen(true)}
+					onClick={openModal}
 					style={{
 						display: 'inline-flex',
 						alignItems: 'center',
@@ -52,22 +54,6 @@ export function GameTagBadge({ appid }: GameTagBadgeProps): JSX.Element | null {
 					/>
 					<span>ADD TAG</span>
 				</div>
-			)}
-			{managerOpen && (
-				<TagManager
-					appid={appid}
-					record={record}
-					onClose={() => setManagerOpen(false)}
-					onSetTag={(tag) => {
-						void setTag(tag);
-					}}
-					onRemove={() => {
-						void remove().then(() => setManagerOpen(false));
-					}}
-					onResetToAuto={() => {
-						void resetToAuto();
-					}}
-				/>
 			)}
 		</div>
 	);

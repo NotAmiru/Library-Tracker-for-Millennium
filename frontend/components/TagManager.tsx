@@ -1,26 +1,19 @@
 import { useEffect, useState } from 'react';
-import type { JSX, MouseEvent } from 'react';
-import { DialogButton, Focusable } from '@steambrew/client';
+import type { JSX } from 'react';
+import { DialogButton, Focusable, ModalRoot, showModal } from '@steambrew/client';
 import { FaCheck } from 'react-icons/fa';
+import { useGameTag } from '../hooks/useGameTag';
 import { TAG_COLORS, TAG_LABELS } from './TagIcon';
 import { getHltbData } from '../lib/hltb';
 import { logError } from '../lib/log';
-import type { GameRecord, HltbData, TagName } from '../types';
+import type { HltbData, TagName } from '../types';
 
-interface TagManagerProps {
+interface TagManagerContentProps {
 	appid: number;
-	record: GameRecord | null;
 	onClose: () => void;
-	onSetTag: (tag: TagName) => void;
-	onRemove: () => void;
-	onResetToAuto: () => void;
 }
 
 const ALL_TAGS: TagName[] = ['mastered', 'completed', 'in_progress', 'dropped'];
-
-function stopPropagation(event: MouseEvent): void {
-	event.stopPropagation();
-}
 
 function formatPlaytime(minutes: number): string {
 	const hours = Math.floor(minutes / 60);
@@ -53,7 +46,9 @@ function SectionHeader({ children }: { children: string }): JSX.Element {
 				letterSpacing: '0.08em',
 				color: '#8f98a0',
 				textTransform: 'uppercase',
-				marginBottom: '4px',
+				marginBottom: '6px',
+				paddingBottom: '4px',
+				borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
 			}}
 		>
 			{children}
@@ -61,7 +56,13 @@ function SectionHeader({ children }: { children: string }): JSX.Element {
 	);
 }
 
-export function TagManager({ appid, record, onClose, onSetTag, onRemove, onResetToAuto }: TagManagerProps): JSX.Element {
+/** The dialog's actual content, rendered inside Steam's own ModalRoot (via
+ * showModal below) rather than our own DOM tree -- see openTagManagerModal
+ * for why. Self-contained: subscribes to useGameTag itself instead of
+ * receiving state as props, since showModal's tree is detached from
+ * GameTagBadge's, so props passed in at call time can't stay live. */
+function TagManagerContent({ appid, onClose }: TagManagerContentProps): JSX.Element {
+	const { record, setTag, remove, resetToAuto } = useGameTag(appid);
 	const [hltb, setHltb] = useState<HltbData | null>(null);
 
 	useEffect(() => {
@@ -82,31 +83,8 @@ export function TagManager({ appid, record, onClose, onSetTag, onRemove, onReset
 	const statusColor = activeTag ? TAG_COLORS[activeTag] : '#8f98a0';
 
 	return (
-		<div
-			style={{
-				position: 'fixed',
-				inset: 0,
-				background: 'rgba(0, 0, 0, 0.6)',
-				display: 'flex',
-				alignItems: 'center',
-				justifyContent: 'center',
-				zIndex: 1000,
-			}}
-			onClick={onClose}
-		>
-			<Focusable
-				flow-children="down"
-				onClick={stopPropagation}
-				style={{
-					background: '#1b2838',
-					borderRadius: '8px',
-					padding: '20px',
-					width: '360px',
-					display: 'flex',
-					flexDirection: 'column',
-					gap: '14px',
-				}}
-			>
+		<ModalRoot closeModal={onClose} onCancel={onClose}>
+			<Focusable flow-children="down" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
 				<div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
 					<div style={{ fontSize: '17px', fontWeight: 700, color: '#fff' }}>{record?.game_name ?? 'Game'}</div>
 					{activeTag && (
@@ -152,7 +130,7 @@ export function TagManager({ appid, record, onClose, onSetTag, onRemove, onReset
 							return (
 								<DialogButton
 									key={tag}
-									onClick={() => onSetTag(tag)}
+									onClick={() => void setTag(tag)}
 									style={{
 										background: TAG_COLORS[tag],
 										color: '#fff',
@@ -169,10 +147,15 @@ export function TagManager({ appid, record, onClose, onSetTag, onRemove, onReset
 				</div>
 
 				<Focusable flow-children="horizontal" style={{ display: 'flex', gap: '8px' }}>
-					<DialogButton onClick={onResetToAuto} style={{ flex: 1 }}>
+					<DialogButton onClick={() => void resetToAuto()} style={{ flex: 1 }}>
 						Reset to Auto
 					</DialogButton>
-					<DialogButton onClick={onRemove} style={{ flex: 1 }}>
+					<DialogButton
+						onClick={() => {
+							void remove().then(onClose);
+						}}
+						style={{ flex: 1 }}
+					>
 						Remove
 					</DialogButton>
 				</Focusable>
@@ -181,6 +164,27 @@ export function TagManager({ appid, record, onClose, onSetTag, onRemove, onReset
 					Close
 				</DialogButton>
 			</Focusable>
-		</div>
+		</ModalRoot>
 	);
+}
+
+/** Opens the tag/stats dialog via Steam's own modal system (the same
+ * showModal/ModalRoot pair steam-easygrid uses successfully) instead of a
+ * homemade `position: fixed` overlay rendered inside the page's own DOM.
+ * That homemade overlay broke in practice: `position: fixed` is scoped to
+ * the nearest ancestor with a `transform` (not necessarily the viewport --
+ * see MDN's "containing block" rules), and Steam's hero-banner ancestor
+ * of the icon row sets one for its parallax effect, so the overlay ended
+ * up clipped to that banner's thin icon-row box instead of covering the
+ * screen -- just a small dark rectangle with no room to show the card.
+ * showModal renders into Steam's own top-level modal layer instead,
+ * sidestepping the whole ancestor chain. */
+export function openTagManagerModal(appid: number, windowRef: Window, gameName: string): void {
+	const holder: { close?: () => void } = {};
+	const onClose = () => holder.close?.();
+	const result = showModal(<TagManagerContent appid={appid} onClose={onClose} />, windowRef, {
+		strTitle: gameName,
+		bHideMainWindowForPopouts: false,
+	});
+	holder.close = result.Close;
 }

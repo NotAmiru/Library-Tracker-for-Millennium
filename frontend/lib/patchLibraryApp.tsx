@@ -127,7 +127,7 @@ function unmount(): void {
 	currentAppId = null;
 }
 
-async function mountForAppId(doc: Document, appid: number): Promise<void> {
+async function mountForAppId(doc: Document, windowRef: Window, appid: number): Promise<void> {
 	if (appid === currentAppId && mountedContainer?.isConnected) {
 		return;
 	}
@@ -158,7 +158,7 @@ async function mountForAppId(doc: Document, appid: number): Promise<void> {
 		container.appendChild(root);
 		mountedContainer = root;
 		mountedRoot = createRoot(root);
-		mountedRoot.render(<GameTagBadge appid={appid} />);
+		mountedRoot.render(<GameTagBadge appid={appid} windowRef={windowRef} />);
 	} catch (error) {
 		logError(`failed to mount game badge for appid=${appid}`, error);
 	}
@@ -166,7 +166,7 @@ async function mountForAppId(doc: Document, appid: number): Promise<void> {
 
 let loggedPathname: string | undefined;
 
-async function handleNavigation(doc: Document, pathname: string | undefined): Promise<void> {
+async function handleNavigation(doc: Document, windowRef: Window, pathname: string | undefined): Promise<void> {
 	if (pathname !== loggedPathname) {
 		loggedPathname = pathname;
 		logInfo(`navigation check: pathname=${String(pathname)}`);
@@ -179,12 +179,12 @@ async function handleNavigation(doc: Document, pathname: string | undefined): Pr
 		}
 		return;
 	}
-	await mountForAppId(doc, Number(match[1]));
+	await mountForAppId(doc, windowRef, Number(match[1]));
 }
 
 interface DesktopPopup {
 	m_strName?: string;
-	m_popup?: { document?: Document };
+	m_popup?: { document?: Document; window?: Window };
 }
 
 let installed = false;
@@ -209,9 +209,18 @@ async function onPopupCreation(popup: DesktopPopup): Promise<void> {
 		return;
 	}
 
+	// The real Window object backing the desktop popup -- needed so
+	// showModal() (used by TagManager to open the stats dialog) attaches
+	// to Steam's own modal system instead of our plugin's isolated one.
+	// Falls back to the bridged bare `window` global (see file-level
+	// comment: this callback runs in a context Millennium bridges into
+	// the real window) rather than the plugin's own top-level `window`,
+	// which would be the wrong, isolated one.
+	const windowRef = popup.m_popup?.window ?? window;
+
 	logInfo('MainWindowBrowserManager ready, registering finished-request listener');
 	mwbm.m_browser.on('finished-request', () => {
-		void handleNavigation(doc, mwbm.m_lastLocation?.pathname);
+		void handleNavigation(doc, windowRef, mwbm.m_lastLocation?.pathname);
 	});
 
 	// "finished-request" fired once on registration but never again while
@@ -225,12 +234,12 @@ async function onPopupCreation(popup: DesktopPopup): Promise<void> {
 	// handleNavigation() itself is a no-op when the appid hasn't changed,
 	// so polling doesn't cause repeated remounts.
 	setInterval(() => {
-		void handleNavigation(doc, mwbm.m_lastLocation?.pathname);
+		void handleNavigation(doc, windowRef, mwbm.m_lastLocation?.pathname);
 	}, POLL_INTERVAL_MS);
 
 	// Covers the plugin loading *after* the user has already navigated to
 	// a game page, where no fresh navigation event will fire.
-	void handleNavigation(doc, mwbm.m_lastLocation?.pathname);
+	void handleNavigation(doc, windowRef, mwbm.m_lastLocation?.pathname);
 }
 
 /** Registers a Millennium.AddWindowCreateHook callback that waits for
