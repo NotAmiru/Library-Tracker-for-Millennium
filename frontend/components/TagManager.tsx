@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { JSX, MouseEvent } from 'react';
-import { DialogButton, Focusable } from '@steambrew/client';
-import { FaCheck } from 'react-icons/fa';
+import type { CSSProperties, JSX, MouseEvent, ReactNode } from 'react';
 import { useGameTag } from '../hooks/useGameTag';
 import { TAG_COLORS, TAG_LABELS } from './TagIcon';
 import { getHltbData } from '../lib/hltb';
@@ -62,23 +60,70 @@ function SectionHeader({ children }: { children: string }): JSX.Element {
 	);
 }
 
+/** Plain clickable div styled like a button, with a hover highlight --
+ * NOT Millennium's DialogButton. DialogButton/Focusable are resolved via
+ * webpack-string-matching against Steam's own minified bundle
+ * (findModuleExport in @steambrew/client), which can silently come back
+ * undefined on a given Steam build; every previous version of this dialog
+ * wrapped its content in Focusable/DialogButton and rendered as an empty
+ * box regardless of how the dialog itself was mounted, which is exactly
+ * what you'd see if those components failed to resolve. GameTag's pill
+ * and the "ADD TAG" placeholder are plain divs and are the only pieces of
+ * this UI confirmed to actually render, so the dialog now matches that. */
+function ActionButton({
+	children,
+	onClick,
+	style,
+}: {
+	children: ReactNode;
+	onClick: () => void;
+	style?: CSSProperties;
+}): JSX.Element {
+	const [hovered, setHovered] = useState(false);
+	return (
+		<div
+			onClick={onClick}
+			onMouseEnter={() => setHovered(true)}
+			onMouseLeave={() => setHovered(false)}
+			style={{
+				textAlign: 'center',
+				padding: '8px',
+				borderRadius: '4px',
+				cursor: 'pointer',
+				fontSize: '13px',
+				fontWeight: 700,
+				userSelect: 'none',
+				background: '#2a3f5a',
+				color: '#fff',
+				border: '2px solid transparent',
+				filter: hovered ? 'brightness(1.15)' : undefined,
+				...style,
+			}}
+		>
+			{children}
+		</div>
+	);
+}
+
 /** Renders the tag/stats dialog by portaling straight into
  * `windowRef.document.body` instead of as a normal in-tree child of
  * GameTagBadge. The overlay itself (`position: fixed; inset: 0`) is
  * unchanged from what already rendered correctly once nested inline --
- * the actual bug was where it was nested: GameTagBadge's mount point is
- * inside Steam's hero-banner icon row, and that banner sets a CSS
- * `transform` for its parallax effect. Per spec, a `transform`d ancestor
- * becomes the containing block for any `position: fixed` descendant, so
- * the overlay was getting clipped to that banner's thin icon-row box
- * instead of the viewport -- a small dark sliver with no room to show the
- * card, i.e. exactly the "black box" symptom. Portaling to `document.body`
- * (the top of the tree, outside any such ancestor) sidesteps that
- * entirely. This intentionally avoids Steam's own showModal/ModalRoot --
- * that path depends on Millennium's webpack-string-matching finding
- * Steam's internal modal component, which can silently resolve to
- * `undefined` on a given Steam build and produce the exact same-looking
- * empty box for a different reason. */
+ * that bug was where it was nested: GameTagBadge's mount point is inside
+ * Steam's hero-banner icon row, and that banner sets a CSS `transform`
+ * for its parallax effect. Per spec, a `transform`d ancestor becomes the
+ * containing block for any `position: fixed` descendant, so the overlay
+ * was getting clipped to that banner's thin icon-row box instead of the
+ * viewport. Portaling to `document.body` (the top of the tree, outside
+ * any such ancestor) sidesteps that entirely.
+ *
+ * Content is built from plain styled divs (ActionButton above), not
+ * Millennium's Focusable/DialogButton -- see ActionButton's comment for
+ * why: those depend on a webpack-reflection lookup that can silently fail
+ * per Steam build, and did produce the same empty-box symptom here
+ * regardless of mounting strategy (inline overlay, Steam's own
+ * showModal/ModalRoot, and this portal all showed it identically, and
+ * Focusable/DialogButton was the one thing common to all three). */
 export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.Element | null {
 	const { record, setTag, remove, resetToAuto } = useGameTag(appid);
 	const [hltb, setHltb] = useState<HltbData | null>(null);
@@ -119,8 +164,7 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 			}}
 			onClick={onClose}
 		>
-			<Focusable
-				flow-children="down"
+			<div
 				onClick={stopPropagation}
 				style={{
 					background: '#1b2838',
@@ -150,7 +194,7 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 								textTransform: 'uppercase',
 							}}
 						>
-							<FaCheck size={10} />
+							<span>✓</span>
 							<span>
 								{TAG_LABELS[activeTag]} {record?.is_manual ? '(Manual)' : '(Auto)'}
 							</span>
@@ -171,46 +215,38 @@ export function TagManager({ appid, windowRef, onClose }: TagManagerProps): JSX.
 
 				<div>
 					<SectionHeader>Set Tag</SectionHeader>
-					<Focusable flow-children="horizontal" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
 						{ALL_TAGS.map((tag) => {
 							const isActive = activeTag === tag;
 							return (
-								<DialogButton
+								<ActionButton
 									key={tag}
 									onClick={() => void setTag(tag)}
 									style={{
 										background: TAG_COLORS[tag],
-										color: '#fff',
-										fontWeight: 700,
 										border: isActive ? '2px solid #fff' : '2px solid transparent',
-										padding: '8px',
 									}}
 								>
 									{TAG_LABELS[tag]}
-								</DialogButton>
+								</ActionButton>
 							);
 						})}
-					</Focusable>
+					</div>
 				</div>
 
-				<Focusable flow-children="horizontal" style={{ display: 'flex', gap: '8px' }}>
-					<DialogButton onClick={() => void resetToAuto()} style={{ flex: 1 }}>
+				<div style={{ display: 'flex', gap: '8px' }}>
+					<ActionButton onClick={() => void resetToAuto()} style={{ flex: 1 }}>
 						Reset to Auto
-					</DialogButton>
-					<DialogButton
-						onClick={() => {
-							void remove().then(onClose);
-						}}
-						style={{ flex: 1 }}
-					>
+					</ActionButton>
+					<ActionButton onClick={() => void remove().then(onClose)} style={{ flex: 1 }}>
 						Remove
-					</DialogButton>
-				</Focusable>
+					</ActionButton>
+				</div>
 
-				<DialogButton onClick={onClose} style={{ width: '100%' }}>
+				<ActionButton onClick={onClose} style={{ width: '100%' }}>
 					Close
-				</DialogButton>
-			</Focusable>
+				</ActionButton>
+			</div>
 		</div>,
 		portalTarget,
 	);
